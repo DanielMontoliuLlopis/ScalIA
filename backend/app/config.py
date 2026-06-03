@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -5,6 +6,19 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost/growthOS"
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _force_asyncpg(cls, v: str) -> str:
+        # Railway/Render entregan "postgresql://" (driver sync psycopg2).
+        # create_async_engine exige driver async → forzar asyncpg.
+        if v.startswith("postgresql+psycopg2://"):
+            return v.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
+        if v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql+asyncpg://", 1)
+        return v
     REDIS_URL: str = "redis://localhost:6379"
 
     OPENAI_API_KEY: str = ""
