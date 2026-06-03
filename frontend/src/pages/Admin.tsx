@@ -923,17 +923,6 @@ function CostsTab() {
   );
 }
 
-function StatusBadge({ status }: { status: string | null }) {
-  const map: Record<string, string> = {
-    active: "bg-emerald-50 text-emerald-700",
-    trialing: "bg-sky-50 text-sky-700",
-    past_due: "bg-amber-50 text-amber-700",
-    canceled: "bg-gray-100 text-gray-500",
-  };
-  const cls = map[status ?? ""] ?? "bg-gray-100 text-gray-500";
-  return <span className={`text-xs px-2 py-0.5 rounded-full ${cls}`}>{status ?? "—"}</span>;
-}
-
 function Modal({
   title,
   children,

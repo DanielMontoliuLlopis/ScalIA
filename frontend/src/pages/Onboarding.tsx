@@ -320,7 +320,7 @@ export function Onboarding() {
               {orderedResearch.map((plan) => {
                 const highlight = plan.id === "research_100";
                 const isPreselected = preselectedPlan === plan.id;
-                const isCurrent = currentPlan === plan.id;
+                const isCurrent = (currentPlan as string | null) === plan.id;
                 return (
                   <div
                     key={plan.id}
