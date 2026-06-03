@@ -383,6 +383,25 @@ setDisconnecting(true);
                 </div>
               )}
 
+              {/* Entrada manual (sandbox / cuentas que no aparecen en el dropdown) */}
+              <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3 space-y-3">
+                <p className="text-xs text-gray-500">
+                  ¿Cuenta sandbox o no aparece arriba? Pega el ID a mano (formato <code>act_123…</code> o solo el número).
+                </p>
+                <Field
+                  label="Ad Account ID manual"
+                  value={selectedAccount}
+                  onChange={(v) => setSelectedAccount(v)}
+                  placeholder="act_1889356911727041"
+                />
+                <Field
+                  label="Page ID manual"
+                  value={selectedPage}
+                  onChange={(v) => setSelectedPage(v)}
+                  placeholder="542745208925695"
+                />
+              </div>
+
               {/* Pixel ID */}
               <div>
                 <Field
