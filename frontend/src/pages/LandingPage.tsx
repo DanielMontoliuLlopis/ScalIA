@@ -657,7 +657,7 @@ function SharedForm({ landing, onSubmit, formData, setFormData, submitting, erro
 // ─── Template: lead_magnet_clean ──────────────────────────────────────────────
 function LeadMagnetLanding(props: TemplateProps) {
   const { landing } = props;
-  const { primary_color, secondary_color } = landing;
+  const { primary_color } = landing;
   return (
     <div className="min-h-screen bg-white">
       <div className="px-6 py-16 max-w-2xl mx-auto text-center">
@@ -683,7 +683,7 @@ function LeadMagnetLanding(props: TemplateProps) {
 // ─── Template: saas_trial / saas_demo ────────────────────────────────────────
 function SaasLanding(props: TemplateProps & { isTrial: boolean }) {
   const { landing, isTrial } = props;
-  const { primary_color, secondary_color } = landing;
+  const { primary_color } = landing;
   return (
     <div className="min-h-screen bg-white">
       {/* Navbar */}
@@ -836,7 +836,7 @@ function AppLanding(props: TemplateProps) {
 // ─── Template: local_offer ────────────────────────────────────────────────────
 function LocalLanding(props: TemplateProps) {
   const { landing } = props;
-  const { primary_color, secondary_color } = landing;
+  const { primary_color } = landing;
   return (
     <div className="min-h-screen bg-white">
       {/* Hero with offer */}

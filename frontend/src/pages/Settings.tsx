@@ -57,7 +57,7 @@ const PALETTES = [
 
 export function Settings() {
   const [searchParams] = useSearchParams();
-  const [settings, setSettings] = useState<UserSettings | null>(null);
+  const [, setSettings] = useState<UserSettings | null>(null);
   const [form, setForm] = useState({
     company_name: "",
     business_description: "",

@@ -79,7 +79,7 @@ export function useWebSocket() {
         // We optimistically update with the info we have from the WS event
         // The full task will come from the next fetchTasks call
         const allTasks = useTasksStore.getState().tasksByPlan;
-        for (const [planId, tasks] of Object.entries(allTasks)) {
+        for (const tasks of Object.values(allTasks)) {
           const existing = tasks.find((t) => t.id === data.task_id);
           if (existing) {
             upsertTask({
