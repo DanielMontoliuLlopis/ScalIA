@@ -106,6 +106,10 @@ export function Onboarding() {
 
   const founderOpen = founder?.is_open ?? false;
 
+  const ACTIVE_STATUSES = ["active", "trialing", "past_due"];
+  const currentPlan =
+    user && ACTIVE_STATUSES.includes(user.subscription_status ?? "") ? user.plan : null;
+
   const handleSelect = async (planId: AnyPlanId) => {
     setLoading(planId);
     setError("");
@@ -220,6 +224,7 @@ export function Onboarding() {
           {ordered.map((plan) => {
             const meta = FEATURES[plan.id];
             const isPreselected = preselectedPlan === plan.id;
+            const isCurrent = currentPlan === plan.id;
             const price = founderOpen ? plan.founder_amount : plan.amount;
             return (
               <div
@@ -265,14 +270,22 @@ export function Onboarding() {
                 </p>
                 <button
                   onClick={() => handleSelect(plan.id)}
-                  disabled={loading !== null}
-                  className={`block w-full text-center mt-6 py-3 rounded-lg font-medium text-sm transition-colors disabled:opacity-60 ${
-                    meta.highlight
+                  disabled={loading !== null || isCurrent}
+                  className={`block w-full text-center mt-6 py-3 rounded-lg font-medium text-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                    isCurrent
+                      ? meta.highlight
+                        ? "bg-emerald-500/20 text-white border border-emerald-300/50"
+                        : "bg-emerald-50 text-emerald-700 border border-emerald-300"
+                      : meta.highlight
                       ? "bg-white text-brand-700 hover:bg-brand-50"
                       : "bg-brand-600 text-white hover:bg-brand-700"
                   }`}
                 >
-                  {loading === plan.id ? "Redirigiendo a Stripe…" : "Empezar ahora"}
+                  {isCurrent
+                    ? "Plan actual"
+                    : loading === plan.id
+                    ? "Redirigiendo a Stripe…"
+                    : "Empezar ahora"}
                 </button>
                 <ul className="mt-8 space-y-3 text-sm flex-1">
                   {meta.bullets.map((b) => (
@@ -307,6 +320,7 @@ export function Onboarding() {
               {orderedResearch.map((plan) => {
                 const highlight = plan.id === "research_100";
                 const isPreselected = preselectedPlan === plan.id;
+                const isCurrent = currentPlan === plan.id;
                 return (
                   <div
                     key={plan.id}
@@ -339,14 +353,22 @@ export function Onboarding() {
                     </p>
                     <button
                       onClick={() => handleSelect(plan.id)}
-                      disabled={loading !== null}
-                      className={`block w-full text-center mt-6 py-3 rounded-lg font-medium text-sm transition-colors disabled:opacity-60 ${
-                        highlight
+                      disabled={loading !== null || isCurrent}
+                      className={`block w-full text-center mt-6 py-3 rounded-lg font-medium text-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                        isCurrent
+                          ? highlight
+                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/40"
+                            : "bg-emerald-50 text-emerald-700 border border-emerald-300"
+                          : highlight
                           ? "bg-amber-400 text-slate-900 hover:bg-amber-300"
                           : "bg-slate-900 text-white hover:bg-slate-800"
                       }`}
                     >
-                      {loading === plan.id ? "Redirigiendo a Stripe…" : "Empezar ahora"}
+                      {isCurrent
+                        ? "Plan actual"
+                        : loading === plan.id
+                        ? "Redirigiendo a Stripe…"
+                        : "Empezar ahora"}
                     </button>
                     <ul className="mt-8 space-y-3 text-sm flex-1">
                       {[

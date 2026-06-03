@@ -26,6 +26,7 @@ from app.models.commission import COMMISSION_PAID, COMMISSION_PENDING, Commissio
 from app.models.user import User
 from app.schemas.admin import (
     AdminClientRow,
+    AdminClientUpdate,
     AdminOverview,
     AssignCloserRequest,
     CloserCreate,
@@ -54,12 +55,17 @@ def _cents(amount: Decimal | int | float | None) -> int:
 
 def _user_mrr_cents(user: User) -> int:
     """MRR aproximado de un usuario según su tier (founder o normal)."""
+    if user.is_superadmin:
+        return 0
     if user.subscription_status not in _ACTIVE_STATUSES:
         return 0
     plan_def = stripe_service.PLAN_DEFS.get(user.plan)
-    if not plan_def:
-        return 0
-    return int(plan_def["founder_amount"] if user.is_founder else plan_def["amount"])
+    if plan_def:
+        return int(plan_def["founder_amount"] if user.is_founder else plan_def["amount"])
+    research_def = stripe_service.RESEARCH_PLAN_DEFS.get(user.plan)
+    if research_def:
+        return int(research_def["amount"])
+    return 0
 
 
 # ── Overview ──────────────────────────────────────────────────────────────────
@@ -139,6 +145,25 @@ async def list_users(db: AsyncSession = Depends(get_db)) -> list[AdminClientRow]
     ]
 
 
+def _client_row(user: User, closer_name: str | None) -> AdminClientRow:
+    return AdminClientRow(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        plan=user.plan,
+        subscription_status=user.subscription_status,
+        is_founder=user.is_founder,
+        closer_id=user.closer_id,
+        closer_name=closer_name,
+        mrr_cents=_user_mrr_cents(user),
+        created_at=user.created_at,
+    )
+
+
+_VALID_PLANS = set(stripe_service.PLAN_DEFS) | set(stripe_service.RESEARCH_PLAN_DEFS) | {"free"}
+_VALID_STATUSES = set(_ACTIVE_STATUSES) | {"canceled", "incomplete", "unpaid", "inactive", None}
+
+
 @router.patch("/users/{user_id}/closer", response_model=AdminClientRow)
 async def assign_closer(
     user_id: uuid.UUID,
@@ -159,18 +184,46 @@ async def assign_closer(
     user.closer_id = body.closer_id
     await db.commit()
     await db.refresh(user)
-    return AdminClientRow(
-        id=user.id,
-        email=user.email,
-        full_name=user.full_name,
-        plan=user.plan,
-        subscription_status=user.subscription_status,
-        is_founder=user.is_founder,
-        closer_id=user.closer_id,
-        closer_name=closer_name,
-        mrr_cents=_user_mrr_cents(user),
-        created_at=user.created_at,
-    )
+    return _client_row(user, closer_name)
+
+
+@router.patch("/users/{user_id}", response_model=AdminClientRow)
+async def update_user(
+    user_id: uuid.UUID,
+    body: AdminClientUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> AdminClientRow:
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    if body.plan is not None:
+        if body.plan not in _VALID_PLANS:
+            raise HTTPException(status_code=400, detail=f"Plan inválido: {body.plan}")
+        user.plan = body.plan
+        # Si pasa a un plan de research, recarga el saldo de escaneos del mes
+        research_def = stripe_service.RESEARCH_PLAN_DEFS.get(body.plan)
+        if research_def is not None:
+            user.scans_remaining = research_def["scans_per_month"]
+
+    if body.subscription_status is not None:
+        if body.subscription_status not in _VALID_STATUSES:
+            raise HTTPException(
+                status_code=400, detail=f"Estado inválido: {body.subscription_status}"
+            )
+        user.subscription_status = body.subscription_status
+
+    if body.is_founder is not None:
+        user.is_founder = body.is_founder
+
+    await db.commit()
+    await db.refresh(user)
+
+    closer_name = None
+    if user.closer_id is not None:
+        closer = await db.get(Closer, user.closer_id)
+        closer_name = closer.full_name if closer else None
+    return _client_row(user, closer_name)
 
 
 # ── Closers ───────────────────────────────────────────────────────────────────

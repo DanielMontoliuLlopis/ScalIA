@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
+import { PublicFooter } from "../components/ui/PublicFooter";
 
 interface PricingPlan {
   id: "starter" | "growth" | "agency";
@@ -618,14 +619,7 @@ export function Home() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-gray-100 py-8">
-        <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center text-sm text-gray-500">
-          <div className="font-semibold text-gray-900">
-            Scal<span className="text-brand-600">IA</span>
-          </div>
-          <div className="mt-3 md:mt-0">© 2026 ScalIA. Todos los derechos reservados.</div>
-        </div>
-      </footer>
+      <PublicFooter />
     </div>
   );
 }

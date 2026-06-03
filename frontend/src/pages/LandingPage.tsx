@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { API_URL } from "../lib/runtimeConfig";
+import { LandingCookieConsent } from "../components/ui/LandingCookieConsent";
 
 interface FormField {
   name: string;
@@ -85,10 +86,9 @@ export function LandingPage() {
         return r.json();
       })
       .then((data) => {
-        if (data) {
-          setLanding(data);
-          if (data.meta_pixel_id) injectMetaPixel(data.meta_pixel_id);
-        }
+        if (data) setLanding(data);
+        // El píxel NO se carga aquí: solo tras consentimiento del visitante
+        // (ver LandingCookieConsent). Cookie de marketing → art. 22.2 LSSI-CE.
       });
   }, [id]);
 
@@ -129,6 +129,7 @@ export function LandingPage() {
     }
   };
 
+  const body = (() => {
   if (notFound) return (
     <div className="min-h-screen flex items-center justify-center text-gray-400">
       <p>Landing page no encontrada.</p>
@@ -300,6 +301,19 @@ export function LandingPage() {
         )}
       </div>
     </div>
+  );
+  })();
+
+  return (
+    <>
+      {body}
+      {landing?.meta_pixel_id && (
+        <LandingCookieConsent
+          pixelId={landing.meta_pixel_id}
+          onAccept={() => injectMetaPixel(landing.meta_pixel_id!)}
+        />
+      )}
+    </>
   );
 }
 

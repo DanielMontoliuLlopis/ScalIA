@@ -69,6 +69,12 @@ class AssignCloserRequest(BaseModel):
     closer_id: uuid.UUID | None = None   # None = quitar atribución
 
 
+class AdminClientUpdate(BaseModel):
+    plan: str | None = None
+    subscription_status: str | None = None
+    is_founder: bool | None = None
+
+
 # ── Comisiones ────────────────────────────────────────────────────────────────
 class CommissionRow(BaseModel):
     id: uuid.UUID

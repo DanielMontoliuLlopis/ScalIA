@@ -2,6 +2,9 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore, type BusinessType } from "../store/authStore";
 
+const TERMS_URL = "/legal/terminos";
+const PRIVACY_URL = "/legal/privacidad";
+
 const BUSINESS_OPTIONS: { value: BusinessType; label: string; emoji: string }[] = [
   { value: "saas", label: "SaaS / Software", emoji: "💻" },
   { value: "ecommerce", label: "Ecommerce / Tienda", emoji: "🛒" },
@@ -21,11 +24,16 @@ export function Register() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [businessType, setBusinessType] = useState<BusinessType | "">("");
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!acceptedLegal) {
+      setError("Debes aceptar los términos y la política de privacidad.");
+      return;
+    }
     setError("");
     setLoading(true);
     try {
@@ -138,20 +146,36 @@ export function Register() {
             />
           </div>
 
+          <label className="flex items-start gap-2 text-xs text-gray-600">
+            <input
+              type="checkbox"
+              checked={acceptedLegal}
+              onChange={(e) => setAcceptedLegal(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-400"
+            />
+            <span>
+              He leído y acepto los{" "}
+              <Link to={TERMS_URL} target="_blank" className="text-brand-600 hover:underline">
+                Términos y Condiciones
+              </Link>{" "}
+              y la{" "}
+              <Link to={PRIVACY_URL} target="_blank" className="text-brand-600 hover:underline">
+                Política de Privacidad
+              </Link>
+              .
+            </span>
+          </label>
+
           {error && <p className="text-red-600 text-sm">{error}</p>}
 
           <button
             type="submit"
-            disabled={loading || !businessType}
+            disabled={loading || !businessType || !acceptedLegal}
             className="w-full bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-lg text-sm transition-colors"
           >
             {loading ? "Creando cuenta…" : "Continuar al pago"}
           </button>
         </form>
-
-        <p className="text-center text-xs text-gray-400 mt-4">
-          Al registrarte aceptas nuestros términos y política de privacidad.
-        </p>
 
         <p className="text-center text-sm text-gray-500 mt-4">
           ¿Ya tienes cuenta?{" "}

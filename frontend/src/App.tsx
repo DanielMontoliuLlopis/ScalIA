@@ -20,6 +20,8 @@ import { Admin } from "./pages/Admin";
 import { CloserLogin } from "./pages/CloserLogin";
 import { CloserDashboard } from "./pages/CloserDashboard";
 import { useCloserAuthStore } from "./store/closerAuthStore";
+import { LegalNotice, PrivacyPolicy, CookiePolicy, Terms } from "./pages/legal/LegalPages";
+import { CookieBanner } from "./components/ui/CookieBanner";
 
 const ACTIVE_STATUSES = new Set(["trialing", "active", "past_due"]);
 
@@ -74,6 +76,11 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        {/* Páginas legales públicas */}
+        <Route path="/legal/aviso-legal" element={<LegalNotice />} />
+        <Route path="/legal/privacidad" element={<PrivacyPolicy />} />
+        <Route path="/legal/cookies" element={<CookiePolicy />} />
+        <Route path="/legal/terminos" element={<Terms />} />
         {/* Onboarding y billing (autenticado pero sin suscripción) */}
         <Route
           path="/onboarding/plan"
@@ -132,6 +139,7 @@ export default function App() {
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <CookieBanner />
     </BrowserRouter>
   );
 }

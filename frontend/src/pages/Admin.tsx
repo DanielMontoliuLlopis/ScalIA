@@ -180,6 +180,16 @@ function OverviewTab() {
 }
 
 // ── Clientes ────────────────────────────────────────────────────────────────────
+const PLAN_OPTIONS = [
+  "free",
+  "starter",
+  "growth",
+  "agency",
+  "research_10",
+  "research_100",
+];
+const STATUS_OPTIONS = ["active", "trialing", "past_due", "canceled", "inactive"];
+
 function ClientsTab() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [closers, setClosers] = useState<CloserRow[]>([]);
@@ -213,6 +223,15 @@ function ClientsTab() {
     setClients((prev) => prev.map((c) => (c.id === userId ? updated : c)));
   };
 
+  const update = async (userId: string, patch: Partial<ClientRow>) => {
+    try {
+      const updated = await api.patch<ClientRow>(`/admin/users/${userId}`, patch);
+      setClients((prev) => prev.map((c) => (c.id === userId ? updated : c)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    }
+  };
+
   if (error) return <ErrorBox msg={error} />;
   if (loading) return <Spinner />;
 
@@ -236,12 +255,39 @@ function ClientsTab() {
                 <div className="font-medium text-gray-900">{c.full_name || "—"}</div>
                 <div className="text-gray-400 text-xs">{c.email}</div>
               </td>
-              <td className="px-4 py-3 capitalize">
-                {c.plan}
-                {c.is_founder && <span className="ml-1 text-amber-500" title="Fundador">★</span>}
+              <td className="px-4 py-3">
+                <select
+                  value={c.plan}
+                  onChange={(e) => update(c.id, { plan: e.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1 text-sm capitalize focus:outline-none focus:ring-2 focus:ring-brand-400"
+                >
+                  {PLAN_OPTIONS.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => update(c.id, { is_founder: !c.is_founder })}
+                  title={c.is_founder ? "Quitar fundador" : "Marcar fundador"}
+                  className={`ml-1 ${c.is_founder ? "text-amber-500" : "text-gray-300 hover:text-amber-400"}`}
+                >
+                  ★
+                </button>
               </td>
               <td className="px-4 py-3">
-                <StatusBadge status={c.subscription_status} />
+                <select
+                  value={c.subscription_status ?? ""}
+                  onChange={(e) => update(c.id, { subscription_status: e.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                >
+                  {STATUS_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
               </td>
               <td className="px-4 py-3">{fmtCents(c.mrr_cents)}</td>
               <td className="px-4 py-3 text-gray-500">{fmtDate(c.created_at)}</td>
