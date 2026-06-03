@@ -3,10 +3,9 @@ import { useAuthStore } from "../store/authStore";
 import { usePlansStore } from "../store/plansStore";
 import { useTasksStore } from "../store/tasksStore";
 import { api } from "../lib/api";
+import { WS_URL } from "../lib/runtimeConfig";
 import type { Plan } from "../store/plansStore";
 import type { AgentTask } from "../store/tasksStore";
-
-const WS_URL = import.meta.env.VITE_WS_URL || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
 
 type WsEvent =
   | { type: "new_plan"; plan_id: string }

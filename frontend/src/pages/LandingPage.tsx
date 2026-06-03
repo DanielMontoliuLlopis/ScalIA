@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
+import { API_URL } from "../lib/runtimeConfig";
 
 interface FormField {
   name: string;
@@ -57,8 +58,6 @@ interface Landing {
   form_fields: FormField[];
   sale_content: SaleContent | null;
 }
-
-const API_URL = "";
 
 const ICONS: Record<string, string> = {
   clock: "⏱", shield: "🛡", chart: "📈", target: "🎯", users: "👥",
@@ -871,7 +870,7 @@ export function LandingThanks() {
 
   useEffect(() => {
     if (!id) return;
-    fetch(`${import.meta.env.VITE_API_URL}/landings/${id}/thanks`)
+    fetch(`${API_URL}/landings/${id}/thanks`)
       .then((r) => r.ok ? r.json() : null)
       .then((d) => d && setData(d))
       .catch(() => null);

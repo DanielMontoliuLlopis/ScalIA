@@ -1,6 +1,6 @@
 // Cliente HTTP para el portal del closer. Usa un token separado del de usuarios
 // ("closer_token") para que ambas sesiones puedan coexistir.
-const BASE_URL = import.meta.env.VITE_API_URL ?? "";
+import { API_URL as BASE_URL } from "./runtimeConfig";
 
 export function getCloserToken(): string | null {
   return localStorage.getItem("closer_token");

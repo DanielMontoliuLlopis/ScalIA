@@ -86,6 +86,11 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL}
         VITE_WS_URL: ${VITE_WS_URL}
+    # Runtime: el entrypoint regenera env-config.js con estas vars al arrancar.
+    # No depende del build → Coolify las pasa como env normales.
+    environment:
+      VITE_API_URL: ${VITE_API_URL}
+      VITE_WS_URL: ${VITE_WS_URL}
     restart: unless-stopped
     ports:
       - "80"
