@@ -1,0 +1,50 @@
+# Env
+.env
+.env.*
+!.env.example
+!.env.prod.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.vite/
+*.local
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Binarios / herramientas locales
+ngrok.exe
+*.exe
+
+# Bases de datos / dumps
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+
+# Claude local
+.claude/
+
+# Coverage / temporales
+.coverage
+htmlcov/
+*.tmp
+*.bak
