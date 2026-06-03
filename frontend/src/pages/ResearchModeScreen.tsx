@@ -45,6 +45,9 @@ export function ResearchModeScreen({ plan }: Props) {
   const [loading, setLoading] = useState(true);
   const [activeAngle, setActiveAngle] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     (async () => {
@@ -57,6 +60,50 @@ export function ResearchModeScreen({ plan }: Props) {
       }
     })();
   }, [plan.id]);
+
+  const withImage = data ? data.angles.filter((a) => a.image_url).length : 0;
+  const missingAngles = data ? data.angles.filter((a) => !a.image_url) : [];
+  const missingImage = missingAngles.length;
+
+  const toggleSelected = (angle: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(angle)) next.delete(angle);
+      else next.add(angle);
+      return next;
+    });
+  };
+
+  const handleGenerateImages = async (angles: string[]) => {
+    if (!data || generating || angles.length === 0) return;
+    setGenError(null);
+    setGenerating(true);
+    const before = withImage;
+    try {
+      const res = await api.post<{ status: string; scans_remaining: number }>(
+        `/plans/${plan.id}/generate-images`,
+        { angles }
+      );
+      setSelected(new Set());
+      setData((d) => (d ? { ...d, scans_remaining: res.scans_remaining } : d));
+      // La generación corre en background (~30s). Polleamos hasta que aparezcan.
+      const deadline = Date.now() + 90_000;
+      const poll = async () => {
+        const fresh = await api.get<ResearchData>(`/plans/${plan.id}/research`);
+        const now = fresh.angles.filter((a) => a.image_url).length;
+        if (now > before || Date.now() > deadline) {
+          setData(fresh);
+          setGenerating(false);
+          return;
+        }
+        setTimeout(poll, 4000);
+      };
+      setTimeout(poll, 4000);
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : "No se pudo generar.");
+      setGenerating(false);
+    }
+  };
 
   // PDF = la vista "tal cual" en una ventana nueva (flujo normal → pagina
   // correctamente todos los ángulos, sin el recorte a 1 página de @media print).
@@ -235,12 +282,25 @@ export function ResearchModeScreen({ plan }: Props) {
           {active && (
             <article className="mt-5 rounded-2xl border border-amber-900/40 bg-gradient-to-b from-amber-950/30 to-transparent p-6">
               <div className="flex flex-col sm:flex-row gap-6">
-                {active.image_url && (
+                {active.image_url ? (
                   <img
                     src={active.image_url}
                     alt={active.angle}
                     className="w-full sm:w-40 h-40 rounded-xl object-cover flex-shrink-0 border border-amber-900/40"
                   />
+                ) : (
+                  <div className="no-print w-full sm:w-40 h-40 rounded-xl flex-shrink-0 border border-dashed border-amber-800/50 bg-amber-950/20 flex flex-col items-center justify-center text-center px-2">
+                    <span className="text-[11px] text-amber-200/40 leading-snug">
+                      Sin imagen
+                    </span>
+                    <button
+                      onClick={() => handleGenerateImages([active.angle])}
+                      disabled={generating}
+                      className="mt-2 text-[10px] font-medium px-2 py-1 rounded-md border border-amber-700/50 text-amber-200/80 hover:bg-amber-400 hover:text-amber-950 transition-colors disabled:opacity-50"
+                    >
+                      {generating ? "Generando…" : "Generar (1 créd.)"}
+                    </button>
+                  </div>
                 )}
                 <div className="flex-1 min-w-0">
                   {active.hook && (
@@ -307,6 +367,50 @@ export function ResearchModeScreen({ plan }: Props) {
           ))}
         </div>
       </section>
+
+      {/* Generar imágenes extra para ángulos sin imagen */}
+      {missingImage > 0 && (
+        <section className="no-print py-6 border-t border-amber-900/30">
+          <h3 className="text-amber-500/70 text-[11px] font-semibold uppercase tracking-[0.2em] mb-3">
+            Generar imágenes extra
+          </h3>
+          <p className="text-[12px] text-amber-200/50 mb-3">
+            Elige qué ángulos quieres con imagen. Cada 2 imágenes = 1 crédito.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {missingAngles.map((a) => (
+              <button
+                key={a.angle}
+                onClick={() => toggleSelected(a.angle)}
+                disabled={generating}
+                className={`text-[13px] px-4 py-2 rounded-full border transition-colors disabled:opacity-50 ${
+                  selected.has(a.angle)
+                    ? "bg-amber-400 text-amber-950 border-amber-400 font-semibold"
+                    : "border-amber-800/50 text-amber-100/70 hover:border-amber-500/70 hover:text-amber-100"
+                }`}
+              >
+                {selected.has(a.angle) ? "✓ " : ""}
+                {ANGLE_LABELS[a.angle] || a.angle}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => handleGenerateImages([...selected])}
+            disabled={generating || selected.size === 0}
+            className="mt-4 text-[12px] font-semibold px-5 py-2 rounded-lg bg-amber-400 text-amber-950 hover:bg-amber-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {generating ? (
+              <span className="flex items-center gap-2">
+                <span className="w-3.5 h-3.5 border-2 border-amber-950/40 border-t-amber-950 rounded-full animate-spin" />
+                Generando imágenes…
+              </span>
+            ) : (
+              `Generar ${selected.size || ""} seleccionado${selected.size === 1 ? "" : "s"} · ${Math.ceil(selected.size / 2) || 1} crédito${Math.ceil(selected.size / 2) === 1 ? "" : "s"}`
+            )}
+          </button>
+          {genError && <p className="mt-2 text-[12px] text-red-400">{genError}</p>}
+        </section>
+      )}
 
       {/* Acciones */}
       <footer className="no-print flex flex-wrap items-center justify-between gap-4 pt-6 border-t border-amber-900/30">

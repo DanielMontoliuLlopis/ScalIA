@@ -4,6 +4,13 @@ from typing import Any
 
 from app.agents.base import BaseAgent
 
+# gpt-image-1 limita a 5 imágenes/min. Limitamos la concurrencia para no
+# disparar las 6 (multi_angle) a la vez y dejamos que el SDK respete el retry-after.
+_IMAGE_SEMAPHORE = asyncio.Semaphore(3)
+_IMAGE_MAX_RETRIES = 6
+# Nº de ángulos que llevan imagen DALL-E en multi_angle (control de coste).
+MAX_ANGLE_IMAGES = 2
+
 SYSTEM_PROMPT = """Eres un experto en copywriting de performance marketing para cualquier tipo de negocio digital.
 Estás especializado en Meta Ads y email marketing, con foco total en conversión.
 
@@ -148,6 +155,10 @@ Ordena de mayor a menor score."""
                     ordered.append(a)
         chosen = ordered[: max(2, min(num_angles, 6))]
 
+        # Solo los 2 primeros ángulos (mayor prioridad) llevan imagen DALL-E:
+        # gpt-image-1 en calidad alta es caro (~$0,17/img). El resto va sin imagen.
+        with_image = set(chosen[:MAX_ANGLE_IMAGES])
+
         async def _one(angle: str) -> dict:
             guide = self.ANGLE_GUIDE.get(angle, "")
             prompt = f"""Genera UN copy de Meta Ads para el ÁNGULO "{angle}".
@@ -182,8 +193,11 @@ Devuelve SOLO JSON:
                 print(f"[CopyAgent] multi_angle copy error ({angle}): {e}")
                 copy = {"hook": "", "body": "", "cta": "Más info", "score": 5}
             copy["angle"] = angle
-            # Imagen propia del ángulo (prompt desde el hook del ángulo + business_type)
-            copy["image_url"] = await self._generate_image_for_angle(copy, saas, audience, business_type, angle)
+            # Imagen propia del ángulo (solo los 2 prioritarios; el resto sin imagen)
+            if angle in with_image:
+                copy["image_url"] = await self._generate_image_for_angle(copy, saas, audience, business_type, angle)
+            else:
+                copy["image_url"] = None
             return copy
 
         copies = await asyncio.gather(*[_one(a) for a in chosen])
@@ -216,9 +230,13 @@ Visual mood for this angle: {mood}.
 Style: clean, modern, scroll-stopping. Square (1:1) for Facebook/Instagram feed.
 NO text that says 'ad' or 'sponsored'."""
         try:
-            response = await self.client.images.generate(
-                model="gpt-image-1", prompt=image_prompt, size="1024x1024", n=1,
-            )
+            async with _IMAGE_SEMAPHORE:
+                response = await self.client.with_options(
+                    max_retries=_IMAGE_MAX_RETRIES
+                ).images.generate(
+                    model="gpt-image-1", prompt=image_prompt, size="1024x1024", n=1,
+                    quality="high",
+                )
             img = response.data[0]
             from app.tools.cloudinary_upload import upload_base64_image
             if hasattr(img, "b64_json") and img.b64_json:
@@ -357,12 +375,16 @@ Include: Bold headline text overlay, professional lifestyle photo or abstract gr
 NO text that says 'ad' or 'sponsored'. Photorealistic or flat design illustration.
 Aspect ratio: square (1:1), suitable for Facebook/Instagram feed."""
 
-            response = await self.client.images.generate(
-                model="gpt-image-1",
-                prompt=image_prompt,
-                size="1024x1024",
-                n=1,
-            )
+            async with _IMAGE_SEMAPHORE:
+                response = await self.client.with_options(
+                    max_retries=_IMAGE_MAX_RETRIES
+                ).images.generate(
+                    model="gpt-image-1",
+                    prompt=image_prompt,
+                    size="1024x1024",
+                    n=1,
+                    quality="high",
+                )
             img = response.data[0]
 
             # Subir a Cloudinary para URL permanente

@@ -151,6 +151,86 @@ def generate_research(self, plan_id: str) -> dict:
         db.close()
 
 
+@celery_app.task(name="generate_angle_images", bind=True, max_retries=2)
+def generate_angle_images(self, plan_id: str, count: int = 2, angles: list[str] | None = None) -> dict:
+    """Genera imágenes DALL-E para ángulos del research sin imagen. Si `angles` viene,
+    genera exactamente esos; si no, los primeros `count`. Actualiza el output del
+    CopyAgent y deja el plan en research_view. Se cobra 1 escaneo (en el endpoint)."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.agents.copy import CopyAgent
+    from app.models.plan import Plan, PlanStatus
+    from app.models.task import AgentTask
+    from app.pubsub import publish_event
+
+    db = _get_session()
+    try:
+        plan = db.execute(select(Plan).where(Plan.id == uuid.UUID(plan_id))).scalar_one_or_none()
+        if not plan:
+            return {"error": "Plan not found"}
+        user_id = str(plan.user_id)
+
+        copy_task = db.execute(
+            select(AgentTask).where(
+                AgentTask.plan_id == plan.id,
+                AgentTask.agent_name == "CopyAgent",
+                AgentTask.status == "completed",
+            ).order_by(AgentTask.created_at.desc())
+        ).scalars().first()
+        if not copy_task or not (copy_task.output or {}).get("copies"):
+            return {"error": "No copies found"}
+
+        copies = copy_task.output["copies"]
+        pending = [c for c in copies if not c.get("image_url")]
+        if angles:
+            wanted = set(angles)
+            pending = [c for c in pending if c.get("angle") in wanted]
+        if not pending:
+            publish_event(user_id, {"type": "plan_research_view", "plan_id": plan_id})
+            return {"plan_id": plan_id, "status": "research_view", "generated": 0}
+
+        # Datos de negocio desde el step del CopyAgent
+        copy_step = next(
+            (s for s in (plan.steps or []) if (s.get("agent", "")).endswith("CopyAgent")), {}
+        )
+        saas = copy_step.get("business_description") or plan.description or ""
+        audience = copy_step.get("target_customer") or "audiencia objetivo"
+        business_type = copy_step.get("business_type", "saas")
+
+        # Con selección explícita generamos todos los pedidos; si no, los primeros `count`.
+        targets = pending if angles else pending[: max(1, count)]
+        agent = CopyAgent()
+
+        async def _gen() -> None:
+            for c in targets:
+                c["image_url"] = await agent._generate_image_for_angle(
+                    c, saas, audience, business_type, c.get("angle", "")
+                )
+
+        asyncio.run(_gen())
+
+        flag_modified(copy_task, "output")
+        plan.status = PlanStatus.research_view
+
+        # Reembolso: el endpoint cobró ceil(pedidas/2). Solo se consume por lo que
+        # realmente salió → devolvemos la diferencia en créditos si alguna falló.
+        generated = sum(1 for c in targets if c.get("image_url"))
+        charged = -(-len(targets) // 2)
+        earned = -(-generated // 2)
+        refund = charged - earned
+        if refund > 0:
+            from app.models.user import User
+            user = db.execute(select(User).where(User.id == plan.user_id)).scalar_one_or_none()
+            if user:
+                user.scans_remaining += refund
+
+        db.commit()
+        publish_event(user_id, {"type": "plan_research_view", "plan_id": plan_id})
+        return {"plan_id": plan_id, "status": "research_view", "generated": generated, "refunded": refund}
+    finally:
+        db.close()
+
+
 def _apply_campaign_edits(ads_output: dict, edits: dict) -> dict:
     """Aplica los cambios del usuario al output del AdsAgent antes de continuar."""
     import copy as copy_mod

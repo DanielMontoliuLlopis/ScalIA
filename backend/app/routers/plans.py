@@ -13,7 +13,7 @@ from app.models.plan import Plan, PlanStatus
 from app.models.task import AgentTask, TaskStatus
 from app.models.user import User
 from app.models.user_settings import UserSettings
-from app.schemas.plan import PlanResponse, RejectRequest, AgentTaskResponse, ResumeCopyRequest, ResumeAdsRequest, PublishMetaResponse, FunnelChoiceRequest, CreativeChoiceRequest, OfferTestRequest, ResearchGenerateRequest, CampaignWizardRequest
+from app.schemas.plan import PlanResponse, RejectRequest, AgentTaskResponse, ResumeCopyRequest, ResumeAdsRequest, PublishMetaResponse, FunnelChoiceRequest, CreativeChoiceRequest, OfferTestRequest, ResearchGenerateRequest, CampaignWizardRequest, GenerateImagesRequest, GenerateImagesResponse
 from app.pubsub import async_publish_event
 from app.services import permissions
 
@@ -689,6 +689,54 @@ async def get_research(
             for a, c in counts.items()
         ]
     return data
+
+@router.post("/{plan_id}/generate-images", response_model=GenerateImagesResponse)
+async def generate_research_images(
+    plan_id: uuid.UUID,
+    body: GenerateImagesRequest,
+    current_user: User = Depends(permissions.require_feature("research_export")),
+    client_account: ClientAccount = Depends(get_active_client_account),
+    db: AsyncSession = Depends(get_db),
+) -> GenerateImagesResponse:
+    """Genera imágenes para `count` ángulos del research que aún no tienen.
+    Cobra 1 escaneo (igual que un research). Lanza la generación en background."""
+    result = await db.execute(
+        select(Plan).where(Plan.id == plan_id, Plan.client_account_id == client_account.id)
+    )
+    plan = result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    if not plan.research_export or plan.status != PlanStatus.research_view:
+        raise HTTPException(status_code=409, detail="El research no está disponible para generar imágenes.")
+
+    research = await _gather_research(db, plan)
+    pending_names = [a["angle"] for a in research.get("angles", []) if not a.get("image_url")]
+    if not pending_names:
+        raise HTTPException(status_code=409, detail="Todos los ángulos ya tienen imagen.")
+
+    # Selección explícita de ángulos (solo los que aún no tienen imagen) o, si no, los primeros `count`.
+    if body.angles:
+        selected = [a for a in body.angles if a in pending_names]
+        if not selected:
+            raise HTTPException(status_code=409, detail="Los ángulos elegidos ya tienen imagen.")
+    else:
+        selected = pending_names[: max(1, body.count)]
+
+    # Coste: 1 crédito por cada 2 imágenes (redondeo hacia arriba).
+    credits = -(-len(selected) // 2)
+    remaining = await permissions.consume_scans(db, current_user, credits)  # 402 sin saldo
+    plan.status = PlanStatus.executing
+    await db.commit()
+
+    from app.workers.execution import generate_angle_images
+    generate_angle_images.delay(str(plan.id), len(selected), selected)
+
+    await async_publish_event(str(current_user.id), {"type": "plan_executing", "plan_id": str(plan.id)})
+    return GenerateImagesResponse(
+        status="executing", scans_remaining=remaining,
+        pending_angles=max(0, len(pending_names) - len(selected)),
+    )
+
 
 # El export PDF se genera en el frontend (window.print de ResearchModeScreen "tal cual").
 # Ya no hay endpoint /export ni dependencia de reportlab/Cloudinary para el research.

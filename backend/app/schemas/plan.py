@@ -126,6 +126,19 @@ class ResearchGenerateRequest(BaseModel):
     business_type: str | None = None  # override; default desde Settings
 
 
+class GenerateImagesRequest(BaseModel):
+    """Genera imágenes para ángulos del research que aún no tienen. Cobra 1 escaneo.
+    Si `angles` viene, genera exactamente esos; si no, los primeros `count` sin imagen."""
+    angles: list[str] | None = None
+    count: int = 2
+
+
+class GenerateImagesResponse(BaseModel):
+    status: str
+    scans_remaining: int
+    pending_angles: int  # ángulos que seguirán sin imagen tras esta tanda
+
+
 class CreativeAsset(BaseModel):
     """Activo creativo asignado a la variante A o B."""
     # Para image_ai → todo null, lo genera CopyAgent

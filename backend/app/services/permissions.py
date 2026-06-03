@@ -138,6 +138,24 @@ async def consume_scan(db: AsyncSession, user: User) -> int:
     return user.scans_remaining
 
 
+async def consume_scans(db: AsyncSession, user: User, n: int) -> int:
+    """Descuenta `n` escaneos de golpe (atómico). Reinicia primero si toca.
+    Lanza 402 si no hay saldo suficiente. Devuelve el saldo restante."""
+    n = max(1, n)
+    _maybe_reset_scans(user)
+    if user.scans_remaining < n:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"Necesitas {n} escaneos y te quedan {user.scans_remaining}. "
+                "Mejora a research_100 o espera al reinicio."
+            ),
+        )
+    user.scans_remaining -= n
+    await db.flush()
+    return user.scans_remaining
+
+
 def require_feature(feature: str):
     """Dependency: exige que el tier de la cuenta incluya `feature`."""
 
