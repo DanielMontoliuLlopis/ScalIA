@@ -1,0 +1,5 @@
+* text=auto
+
+# Scripts que corren en contenedores Linux: SIEMPRE LF (CRLF rompe el shebang)
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
