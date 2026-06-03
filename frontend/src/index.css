@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply text-slate-800;
+    background-color: #f4f3fb;
+    background-image: theme("backgroundImage.app-gradient");
+    background-attachment: fixed;
+  }
+}
+
+/* En pantalla el bloque de impresión (6 ángulos completos) está oculto.
+   El export PDF se hace en una ventana nueva (ver ResearchModeScreen). */
+.print-only {
+  display: none;
+}
+
+@layer components {
+  /* Tarjeta glass: translúcida + blur + borde sutil */
+  .glass {
+    @apply bg-white/60 backdrop-blur-xl border border-white/40 shadow-glass rounded-2xl;
+  }
+  .glass-dark {
+    @apply bg-slate-900/40 backdrop-blur-xl border border-white/10 shadow-glass rounded-2xl;
+  }
+
+  /* CTA con gradiente de marca */
+  .btn-brand {
+    @apply bg-brand-gradient text-white font-medium rounded-xl shadow-glow
+           hover:brightness-110 active:brightness-95 transition;
+  }
+
+  /* Item de navegación */
+  .nav-item {
+    @apply flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium
+           text-slate-600 hover:bg-white/50 hover:text-slate-900 transition;
+  }
+  .nav-item-active {
+    @apply bg-white/70 text-brand-700 shadow-glass;
+  }
+}
