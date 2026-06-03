@@ -18,6 +18,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # Override sqlalchemy.url from environment so Docker works correctly
 db_url = os.environ.get("DATABASE_URL")
 if db_url:
+    # create_async_engine exige driver async → forzar asyncpg
+    # (Railway/Render entregan "postgresql://" = psycopg2 sync)
+    if db_url.startswith("postgresql+psycopg2://"):
+        db_url = db_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
+    elif db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
     config.set_main_option("sqlalchemy.url", db_url)
 
 from app.database import Base
