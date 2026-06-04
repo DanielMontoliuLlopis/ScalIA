@@ -68,10 +68,11 @@ Tipo: {business_type}
 2. {angles[1]}
 3. {angles[2]}
 
-REGLA CRÍTICA: Las queries deben ser sobre el PRODUCTO/SERVICIO real que vende este negocio, visto desde la perspectiva del CLIENTE FINAL que lo compra. NO sobre cómo el negocio hace marketing.
+REGLA CRÍTICA: Las queries deben buscar el PROBLEMA/DOLOR REAL que el cliente final tiene ANTES de usar este producto — el dolor concreto que el producto resuelve, expresado como lo escribiría el cliente en un foro. NO busques quejas genéricas sobre "tener software" ni sobre "demasiadas herramientas": busca el trabajo-a-resolver específico (job-to-be-done) de este producto.
 
-Ejemplo correcto para "tienda dropshipping tiras nasales": "tiras nasales ronquidos opiniones reddit"
-Ejemplo incorrecto: "dropshipping marketing estrategias"
+Ejemplo para "tienda dropshipping tiras nasales": "tiras nasales ronquidos opiniones reddit" (el dolor: roncar)
+Ejemplo para "herramienta que genera copies y ángulos de venta con data real": "mis anuncios de facebook no convierten reddit", "cómo escribir copy que venda", "investigar audiencia lleva horas" (el dolor: copy malo / research lento, NO "demasiadas herramientas de marketing")
+Ejemplo INCORRECTO siempre: "dropshipping marketing estrategias", "mejores herramientas all-in-one agencia"
 
 Devuelve JSON: {{"queries": ["query1", "query2", "query3"]}}"""},
             ],
@@ -211,6 +212,12 @@ Devuelve JSON: {{"queries": ["query1", "query2", "query3"]}}"""},
 
 {combined}
 {creative_context}
+
+REGLA CRÍTICA DE ENFOQUE — léela antes de generar nada:
+- El PRODUCTO es: "{business_context}". El research debe vender ESTE producto, no otro.
+- pain_points, audience_language y los 6 copy_angles deben girar sobre el DOLOR ESPECÍFICO que ESTE producto resuelve (el job-to-be-done del cliente), NO sobre dolores genéricos del sector.
+- PROHIBIDO derivar a ángulos genéricos que no son lo que vende este producto (ej: "demasiadas herramientas", "consolida 5 plataformas en una", "all-in-one") salvo que el producto sea literalmente eso.
+- Antes de cada hook pregúntate: "¿esto vende EXACTAMENTE lo que hace {business_context}, o podría servir para cualquier SaaS?" Si sirve para cualquiera, está mal: hazlo específico al producto.
 
 Extrae y devuelve SOLO un JSON con esta estructura:
 {{
