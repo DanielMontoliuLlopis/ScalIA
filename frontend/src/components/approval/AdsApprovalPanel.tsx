@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { usePlansStore } from "../../store/plansStore";
 import type { Plan } from "../../store/plansStore";
@@ -38,6 +38,7 @@ interface AdsOutput {
       targeting?: {
         age_min?: number;
         age_max?: number;
+        genders?: number[];
         geo_locations?: { countries?: string[] };
       };
     };
@@ -160,6 +161,20 @@ interface MetaPublishResult {
   meta_ads_manager_url: string;
 }
 
+interface MessageMatch {
+  hook: string;
+  warnings: string[];
+  policy_warnings: string[];
+  policy_status: string | null;
+}
+
+interface AngleDraft {
+  index: number;
+  angle: string;
+  hook: string;
+  keep: boolean;
+}
+
 export function AdsApprovalPanel({ plan, adsTask, nextStep }: Props) {
   const { upsertPlan } = usePlansStore();
   const output = adsTask.output as AdsOutput | null;
@@ -183,6 +198,30 @@ export function AdsApprovalPanel({ plan, adsTask, nextStep }: Props) {
   const [countries, setCountries] = useState<string[]>(
     cj?.ad_set?.targeting?.geo_locations?.countries ?? ["ES"]
   );
+  // Género: [] = todos, [1] = hombres, [2] = mujeres
+  const [genders, setGenders] = useState<number[]>(
+    cj?.ad_set?.targeting?.genders ?? []
+  );
+
+  // Validación de hilo narrativo + políticas Meta
+  const [match, setMatch] = useState<MessageMatch | null>(null);
+  useEffect(() => {
+    api
+      .get<MessageMatch>(`/plans/${plan.id}/message-match`)
+      .then(setMatch)
+      .catch(() => setMatch(null));
+  }, [plan.id]);
+
+  // Multi-Angle: selección de ángulos + edición de hook
+  const [angleDrafts, setAngleDrafts] = useState<AngleDraft[]>(
+    anglesTested.map((a, i) => ({
+      index: i,
+      angle: a.angle ?? "",
+      hook: a.hook ?? "",
+      keep: true,
+    }))
+  );
+  const keptCount = angleDrafts.filter((a) => a.keep).length;
   const [adAMessage, setAdAMessage] = useState(
     cj?.ads?.[0]?.creative?.object_story_spec?.link_data?.message ?? ""
   );
@@ -209,8 +248,15 @@ export function AdsApprovalPanel({ plan, adsTask, nextStep }: Props) {
           age_min: parseInt(ageMin),
           age_max: parseInt(ageMax),
           countries,
+          genders,
           ...(isMultiAngle
-            ? {}
+            ? {
+                angles: angleDrafts.map((a) => ({
+                  index: a.index,
+                  keep: a.keep,
+                  hook: a.hook,
+                })),
+              }
             : {
                 ad_a_message: adAMessage,
                 ...(plan.ab_testing ? { ad_b_message: adBMessage } : {}),
@@ -248,6 +294,66 @@ export function AdsApprovalPanel({ plan, adsTask, nextStep }: Props) {
           {output.budget_summary}
         </p>
       </div>
+
+      {/* Validación: hilo narrativo (message match) */}
+      {match && match.warnings.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 space-y-1.5">
+          <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+            <span>🧵</span> Coherencia del mensaje
+          </p>
+          {match.hook && (
+            <p className="text-[11px] text-amber-600">
+              Hook del anuncio: <span className="italic">"{match.hook}"</span>
+            </p>
+          )}
+          <ul className="space-y-1">
+            {match.warnings.map((w, i) => (
+              <li key={i} className="text-xs text-amber-700 flex gap-1.5">
+                <span className="shrink-0">⚠️</span>
+                <span>{w}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[11px] text-amber-500 pt-0.5">
+            No bloquea la publicación, pero un mensaje incoherente suele bajar la conversión.
+          </p>
+        </div>
+      )}
+
+      {/* Validación: políticas de Meta */}
+      {match && match.policy_warnings.length > 0 && (
+        <div
+          className={`rounded-xl p-3.5 space-y-1.5 border ${
+            match.policy_status === "rejected"
+              ? "bg-red-50 border-red-200"
+              : "bg-orange-50 border-orange-200"
+          }`}
+        >
+          <p
+            className={`text-xs font-semibold flex items-center gap-1.5 ${
+              match.policy_status === "rejected" ? "text-red-800" : "text-orange-800"
+            }`}
+          >
+            <span>🛡️</span> Políticas de Meta
+            {match.policy_status === "approved_with_fixes" && (
+              <span className="font-normal text-orange-500">(corregido por la IA)</span>
+            )}
+          </p>
+          <ul className="space-y-1">
+            {match.policy_warnings.map((w, i) => (
+              <li
+                key={i}
+                className={`text-xs flex gap-1.5 ${
+                  match.policy_status === "rejected" ? "text-red-700" : "text-orange-700"
+                }`}
+              >
+                <span className="shrink-0">•</span>
+                <span>{w}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Sección: Campaña */}
       <div className="bg-white/70 backdrop-blur-xl rounded-xl border border-white/50 shadow-glass p-4 space-y-4">
@@ -294,6 +400,37 @@ export function AdsApprovalPanel({ plan, adsTask, nextStep }: Props) {
             type="number"
             suffix="años"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Género</label>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { val: [] as number[], label: "Todos" },
+              { val: [1], label: "Hombres" },
+              { val: [2], label: "Mujeres" },
+            ].map((g) => {
+              const active =
+                genders.length === g.val.length &&
+                g.val.every((v) => genders.includes(v));
+              return (
+                <button
+                  key={g.label}
+                  onClick={() => setGenders(g.val)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+                    active
+                      ? "bg-violet-600 text-white border-violet-600"
+                      : "bg-white text-gray-600 border-gray-300 hover:border-violet-400"
+                  }`}
+                >
+                  {g.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            Restringe solo si el producto es claramente de un género; "Todos" da mejor alcance.
+          </p>
         </div>
 
         <div>
@@ -346,41 +483,74 @@ export function AdsApprovalPanel({ plan, adsTask, nextStep }: Props) {
       {/* Sección: Anuncios — Multi-Angle (1 ad set por ángulo) */}
       {isMultiAngle ? (
         <div className="bg-white/70 backdrop-blur-xl rounded-xl border border-white/50 shadow-glass p-4 space-y-4">
-          <SectionTitle>Anuncios — Multi-Angle ({anglesTested.length} ángulos)</SectionTitle>
+          <SectionTitle>Anuncios — Multi-Angle ({keptCount} de {anglesTested.length} ángulos)</SectionTitle>
           <p className="text-xs text-gray-400 -mt-2">
-            Cada ángulo es un ad set independiente con su propio copy e imagen. Meta reparte el
-            presupuesto equitativamente en la fase de exploración.
+            Desmarca los ángulos que no quieras lanzar y edita su hook. El presupuesto se reparte
+            equitativamente entre los {keptCount} seleccionados en la fase de exploración.
           </p>
+          {keptCount === 0 && (
+            <p className="text-xs text-red-600">Selecciona al menos un ángulo para publicar.</p>
+          )}
           <div className="grid sm:grid-cols-2 gap-3">
-            {anglesTested.map((a, i) => (
-              <div key={i} className="rounded-xl border-2 border-dashed border-violet-200 p-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="w-6 h-6 rounded-full bg-violet-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
-                    {i + 1}
-                  </span>
-                  <span className="text-xs font-semibold text-violet-700 capitalize">
-                    {(a.angle ?? "").replace(/_/g, " ")}
-                  </span>
-                  {a.budget_share != null && (
-                    <span className="ml-auto text-[11px] text-gray-400">
-                      {Math.round(a.budget_share * 100)}% budget
+            {anglesTested.map((a, i) => {
+              const draft = angleDrafts[i];
+              if (!draft) return null;
+              const share = keptCount > 0 ? Math.round((1 / keptCount) * 100) : 0;
+              return (
+                <div
+                  key={i}
+                  className={`rounded-xl border-2 border-dashed p-3 space-y-2 transition-opacity ${
+                    draft.keep ? "border-violet-200" : "border-gray-200 opacity-50"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={draft.keep}
+                      onChange={(e) =>
+                        setAngleDrafts((prev) =>
+                          prev.map((d) =>
+                            d.index === i ? { ...d, keep: e.target.checked } : d
+                          )
+                        )
+                      }
+                      className="w-4 h-4 accent-violet-600 shrink-0"
+                    />
+                    <span className="text-xs font-semibold text-violet-700 capitalize">
+                      {(a.angle ?? "").replace(/_/g, " ")}
                     </span>
-                  )}
-                </div>
-                {a.image_url ? (
-                  <img
-                    src={a.image_url}
-                    alt={a.angle}
-                    className="w-full rounded-lg object-cover max-h-40"
-                  />
-                ) : (
-                  <div className="w-full h-24 rounded-lg bg-gray-100 flex items-center justify-center text-[11px] text-gray-400">
-                    Sin imagen
+                    {draft.keep && (
+                      <span className="ml-auto text-[11px] text-gray-400">{share}% budget</span>
+                    )}
                   </div>
-                )}
-                {a.hook && <p className="text-xs text-gray-700 leading-snug">{a.hook}</p>}
-              </div>
-            ))}
+                  {a.image_url ? (
+                    <img
+                      src={a.image_url}
+                      alt={a.angle}
+                      className="w-full rounded-lg object-cover max-h-40"
+                    />
+                  ) : (
+                    <div className="w-full h-24 rounded-lg bg-gray-100 flex items-center justify-center text-[11px] text-gray-400">
+                      Sin imagen
+                    </div>
+                  )}
+                  <textarea
+                    value={draft.hook}
+                    onChange={(e) =>
+                      setAngleDrafts((prev) =>
+                        prev.map((d) =>
+                          d.index === i ? { ...d, hook: e.target.value } : d
+                        )
+                      )
+                    }
+                    disabled={!draft.keep}
+                    rows={2}
+                    placeholder="Hook del ángulo"
+                    className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs resize-none focus:outline-none focus:ring-2 focus:ring-violet-400 disabled:bg-gray-50 disabled:text-gray-400"
+                  />
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : (
@@ -499,7 +669,7 @@ export function AdsApprovalPanel({ plan, adsTask, nextStep }: Props) {
       <div className="flex gap-2">
         <button
           onClick={handleConfirm}
-          disabled={loading || countries.length === 0}
+          disabled={loading || countries.length === 0 || (isMultiAngle && keptCount === 0)}
           className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 font-medium py-2.5 rounded-xl text-sm transition-colors"
         >
           {loading ? "Procesando…" : "Guardar ediciones →"}

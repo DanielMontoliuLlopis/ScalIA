@@ -25,6 +25,7 @@ class RecommendationResponse(BaseModel):
     action_payload: dict
     status: str
     applied_at: datetime | None
+    applied_result: dict | None = None
     created_at: datetime
 
     class Config:
@@ -71,11 +72,72 @@ async def approve_recommendation(
     )).scalar_one_or_none()
     if not rec:
         raise HTTPException(status_code=404, detail="Recommendation not found")
-    if rec.status != "pending":
+    # Se puede aprobar (o reintentar) si está pendiente o si falló la ejecución anterior.
+    if rec.status not in ("pending", "failed"):
         raise HTTPException(status_code=400, detail=f"Recomendación ya está en estado '{rec.status}'")
 
-    rec.status = "approved"
+    plan = (await db.execute(
+        select(Plan).where(Plan.id == rec.plan_id)
+    )).scalar_one_or_none()
+
+    # Ejecutar en Meta tras aprobación (propone → apruebo → ejecuta).
+    from app.services.recommendation_executor import execute_recommendation
+    result = await execute_recommendation(db, plan, rec) if plan else {
+        "status": "failed", "executed": False, "detail": "Plan no encontrado", "changes": [],
+    }
+
+    # status final: applied | failed | approved (asesoría manual)
+    if result["status"] == "applied":
+        rec.status = "applied"
+    elif result["status"] == "failed":
+        rec.status = "failed"
+    else:  # manual / advisory → aprobada, el usuario actúa por su cuenta
+        rec.status = "approved"
+
     rec.applied_at = datetime.now(timezone.utc)
+    rec.applied_result = result
+    await db.commit()
+    await db.refresh(rec)
+    return rec
+
+
+@router.post("/{recommendation_id}/undo", response_model=RecommendationResponse)
+async def undo_recommendation_endpoint(
+    recommendation_id: uuid.UUID,
+    current_user: User = Depends(permissions.require_feature("optimization")),
+    client_account: ClientAccount = Depends(get_active_client_account),
+    db: AsyncSession = Depends(get_db),
+) -> RecommendationResponse:
+    """Revierte una recomendación ya aplicada en Meta (reactiva pausados, restaura
+    presupuestos). Solo aplica a recomendaciones en estado 'applied'."""
+    rec = (await db.execute(
+        select(Recommendation).where(
+            Recommendation.id == recommendation_id,
+            Recommendation.client_account_id == client_account.id,
+        )
+    )).scalar_one_or_none()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    if rec.status != "applied":
+        raise HTTPException(status_code=400, detail="Solo se puede deshacer una recomendación aplicada")
+
+    plan = (await db.execute(
+        select(Plan).where(Plan.id == rec.plan_id)
+    )).scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    from app.services.recommendation_executor import undo_recommendation
+    result = await undo_recommendation(db, plan, rec)
+    if result["status"] != "reverted":
+        # No cambiar el estado: sigue 'applied' para poder reintentar el undo.
+        rec.applied_result = {**(rec.applied_result or {}), "undo_error": result["detail"]}
+        await db.commit()
+        await db.refresh(rec)
+        raise HTTPException(status_code=502, detail=result["detail"])
+
+    rec.status = "reverted"
+    rec.applied_result = result
     await db.commit()
     await db.refresh(rec)
     return rec

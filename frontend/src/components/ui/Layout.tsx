@@ -148,6 +148,17 @@ export function Layout() {
               Dashboard
             </NavLink>
           )}
+          {!researchOnly && (
+            <NavLink
+              to="/lead-forms"
+              className={({ isActive }) =>
+                `nav-item ${isActive ? "nav-item-active" : ""}`
+              }
+            >
+              <span>📝</span>
+              Formularios
+            </NavLink>
+          )}
           <NavLink
             to="/settings"
             className={({ isActive }) =>

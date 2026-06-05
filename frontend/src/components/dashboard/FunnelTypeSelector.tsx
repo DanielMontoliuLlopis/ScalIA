@@ -85,6 +85,12 @@ interface AngleHistorySummary {
   by_business_type: Record<string, { angle: string; total: number; win_rate: number }[]>;
 }
 
+interface LeadFormLite {
+  id: string;
+  name: string;
+  meta_form_id: string | null;
+}
+
 const ANGLE_LABELS: Record<string, string> = {
   dolor: "Dolor",
   aspiracion: "Aspiración",
@@ -106,6 +112,8 @@ export function FunnelTypeSelector({ plan }: Props) {
   const [abMode, setAbMode] = useState<AbMode>("ab_classic");
   const [numAngles, setNumAngles] = useState(3);
   const [angleHistory, setAngleHistory] = useState<{ angle: string; win_rate: number }[]>([]);
+  const [leadForms, setLeadForms] = useState<LeadFormLite[]>([]);
+  const [leadFormId, setLeadFormId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,6 +131,15 @@ export function FunnelTypeSelector({ plan }: Props) {
       })
       .catch(() => setAngleHistory([]));
   }, [canMultiAngle]);
+
+  // Formularios de Lead Ad disponibles (solo relevante para instant_form)
+  useEffect(() => {
+    if (selected !== "instant_form" || leadForms.length > 0) return;
+    api
+      .get<LeadFormLite[]>("/lead-forms")
+      .then(setLeadForms)
+      .catch(() => setLeadForms([]));
+  }, [selected]);
 
   const selectedOpt = OPTIONS.find((o) => o.id === selected);
   // El modo de testeo aplica a cualquier funnel que genere anuncios (todos menos URL externa pura)
@@ -143,6 +160,7 @@ export function FunnelTypeSelector({ plan }: Props) {
         redirect_url: selectedOpt?.needsRedirectUrl ? redirectUrl.trim() : null,
         ab_mode: showTestMode ? abMode : "ab_classic",
         num_angles: showTestMode && abMode === "multi_angle" ? numAngles : null,
+        lead_form_id: selected === "instant_form" && leadFormId ? leadFormId : null,
       });
       upsertPlan(updated);
     } catch (e) {
@@ -215,6 +233,28 @@ export function FunnelTypeSelector({ plan }: Props) {
           </button>
         ))}
       </div>
+
+      {selected === "instant_form" && (
+        <div className="mt-3 space-y-1 border-t border-brand-200 pt-3">
+          <label className="text-xs font-semibold text-gray-700 block">Formulario de Lead Ad</label>
+          <select
+            value={leadFormId}
+            onChange={(e) => setLeadFormId(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+          >
+            <option value="">Crear automáticamente al publicar</option>
+            {leadForms.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+                {f.meta_form_id ? " (sincronizado)" : ""}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-gray-500">
+            Gestiona tus formularios en la pestaña <span className="font-medium">Formularios</span>.
+          </p>
+        </div>
+      )}
 
       {selectedOpt?.needsSaleType && (
         <div className="mt-3 space-y-2 border-t border-brand-200 pt-3">

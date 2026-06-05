@@ -346,7 +346,7 @@ export function Home() {
             <div className="mt-6 space-y-4">
               {[
                 ["ICP", "Perfil de cliente ideal con objeciones"],
-                ["Pain points", "Reales, con fuentes de Brave Search"],
+                ["Pain points", "Reales, con fuentes de Internet"],
                 ["6 ángulos", "Dolor · Aspiración · Miedo · Social · Curiosidad · Credibilidad"],
                 ["Copy + imagen", "Cada ángulo con su hook e imagen"],
                 ["Export", "PDF listo para tu cliente"],
@@ -376,27 +376,24 @@ export function Home() {
             <div className="inline-flex bg-white border border-gray-200 rounded-full p-1 shadow-sm">
               <button
                 onClick={() => setTrack("research")}
-                className={`px-5 py-2 rounded-full text-sm font-medium transition-colors ${
-                  track === "research"
+                className={`px-5 py-2 rounded-full text-sm font-medium transition-colors ${track === "research"
                     ? "bg-slate-900 text-white"
                     : "text-gray-600 hover:text-gray-900"
-                }`}
+                  }`}
               >
                 Research Mode
               </button>
               <button
                 onClick={() => setTrack("platform")}
-                className={`px-5 py-2 rounded-full text-sm font-medium transition-colors inline-flex items-center gap-2 ${
-                  track === "platform"
+                className={`px-5 py-2 rounded-full text-sm font-medium transition-colors inline-flex items-center gap-2 ${track === "platform"
                     ? "bg-brand-600 text-white"
                     : "text-gray-400 hover:text-gray-600"
-                }`}
+                  }`}
               >
                 Plataforma completa
                 <span
-                  className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-full ${
-                    track === "platform" ? "bg-white/20 text-white" : "bg-amber-100 text-amber-700"
-                  }`}
+                  className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-full ${track === "platform" ? "bg-white/20 text-white" : "bg-amber-100 text-amber-700"
+                    }`}
                 >
                   Pronto
                 </span>
@@ -451,11 +448,10 @@ export function Home() {
                 {PLANS.map((plan) => (
                   <div
                     key={plan.id}
-                    className={`rounded-2xl p-8 ${
-                      plan.highlight
+                    className={`rounded-2xl p-8 ${plan.highlight
                         ? "bg-gradient-to-br from-brand-600 to-violet-600 text-white shadow-2xl shadow-brand-200 scale-[1.02]"
                         : "bg-white border border-gray-200"
-                    }`}
+                      }`}
                   >
                     {plan.highlight && (
                       <div className="inline-block text-xs font-medium bg-white/20 text-white px-2 py-1 rounded-full mb-3">
@@ -483,19 +479,17 @@ export function Home() {
                       </span>
                     </p>
                     <p
-                      className={`mt-1 text-sm font-medium ${
-                        plan.highlight ? "text-brand-100" : "text-brand-600"
-                      }`}
+                      className={`mt-1 text-sm font-medium ${plan.highlight ? "text-brand-100" : "text-brand-600"
+                        }`}
                     >
                       {plan.campaigns}
                     </p>
                     <Link
                       to={`/register?plan=${plan.id}`}
-                      className={`block text-center mt-6 py-3 rounded-lg font-medium text-sm transition-colors ${
-                        plan.highlight
+                      className={`block text-center mt-6 py-3 rounded-lg font-medium text-sm transition-colors ${plan.highlight
                           ? "bg-white text-brand-700 hover:bg-brand-50"
                           : "bg-brand-600 text-white hover:bg-brand-700"
-                      }`}
+                        }`}
                     >
                       Empezar ahora
                     </Link>
@@ -503,9 +497,8 @@ export function Home() {
                       {plan.features.map((f) => (
                         <li key={f} className="flex items-start gap-2">
                           <svg
-                            className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
-                              plan.highlight ? "text-white" : "text-brand-600"
-                            }`}
+                            className={`w-5 h-5 flex-shrink-0 mt-0.5 ${plan.highlight ? "text-white" : "text-brand-600"
+                              }`}
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -534,11 +527,10 @@ export function Home() {
                 {RESEARCH_PLANS.map((plan) => (
                   <div
                     key={plan.id}
-                    className={`rounded-2xl p-8 ${
-                      plan.highlight
+                    className={`rounded-2xl p-8 ${plan.highlight
                         ? "bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-2xl scale-[1.02]"
                         : "bg-white border border-gray-200"
-                    }`}
+                      }`}
                   >
                     {plan.highlight && (
                       <div className="inline-block text-xs font-medium bg-amber-400 text-slate-900 px-2 py-1 rounded-full mb-3">
@@ -556,19 +548,17 @@ export function Home() {
                       </span>
                     </div>
                     <p
-                      className={`mt-1 text-sm font-medium ${
-                        plan.highlight ? "text-amber-400" : "text-amber-600"
-                      }`}
+                      className={`mt-1 text-sm font-medium ${plan.highlight ? "text-amber-400" : "text-amber-600"
+                        }`}
                     >
                       {plan.scans} escaneos/mes · {plan.pricePerScan}/escaneo
                     </p>
                     <Link
                       to={`/register?plan=${plan.id}`}
-                      className={`block text-center mt-6 py-3 rounded-lg font-medium text-sm transition-colors ${
-                        plan.highlight
+                      className={`block text-center mt-6 py-3 rounded-lg font-medium text-sm transition-colors ${plan.highlight
                           ? "bg-amber-400 text-slate-900 hover:bg-amber-300"
                           : "bg-slate-900 text-white hover:bg-slate-800"
-                      }`}
+                        }`}
                     >
                       Empezar ahora
                     </Link>
@@ -576,9 +566,8 @@ export function Home() {
                       {plan.features.map((f) => (
                         <li key={f} className="flex items-start gap-2">
                           <svg
-                            className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
-                              plan.highlight ? "text-amber-400" : "text-slate-700"
-                            }`}
+                            className={`w-5 h-5 flex-shrink-0 mt-0.5 ${plan.highlight ? "text-amber-400" : "text-slate-700"
+                              }`}
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"

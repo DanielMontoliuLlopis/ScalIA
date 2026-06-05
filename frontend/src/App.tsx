@@ -10,6 +10,7 @@ import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { Settings } from "./pages/Settings";
 import { Campaigns } from "./pages/Campaigns";
+import { LeadForms } from "./pages/LeadForms";
 import { ResearchLibrary } from "./pages/ResearchLibrary";
 import { ClientAccounts } from "./pages/ClientAccounts";
 import { LandingPage, LandingThanks } from "./pages/LandingPage";
@@ -115,6 +116,7 @@ export default function App() {
           <Route path="/research" element={<ResearchLibrary />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/campaigns" element={<Campaigns />} />
+          <Route path="/lead-forms" element={<LeadForms />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/clients" element={<ClientAccounts />} />
         </Route>

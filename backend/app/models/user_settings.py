@@ -28,6 +28,9 @@ class UserSettings(Base):
     resend_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     resend_from_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     meta_page_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # URL de política de privacidad — obligatoria para crear Lead Ad forms en Meta.
+    # Sirve de fallback al auto-crear el formulario de una campaña instant_form.
+    privacy_policy_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     whatsapp_phone_number_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     whatsapp_phone_display: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

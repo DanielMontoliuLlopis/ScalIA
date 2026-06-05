@@ -13,6 +13,7 @@ interface UserSettings {
   company_name: string | null;
   business_description: string | null;
   business_type: string | null;
+  privacy_policy_url?: string | null;
   has_meta_token?: boolean;
   has_resend_key?: boolean;
   resend_from_email?: string | null;
@@ -65,6 +66,7 @@ export function Settings() {
     meta_pixel_id: "",
     logo_url: "",
     color_palette: "indigo",
+    privacy_policy_url: "",
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -102,6 +104,7 @@ export function Settings() {
         meta_pixel_id: s.meta_pixel_id ?? "",
         logo_url: s.logo_url ?? "",
         color_palette: s.color_palette ?? "indigo",
+        privacy_policy_url: s.privacy_policy_url ?? "",
       });
       setMetaConnected(!!s.has_meta_token);
       if (s.meta_ad_account_id) setSelectedAccount(s.meta_ad_account_id);
@@ -237,6 +240,7 @@ setDisconnecting(true);
         business_type: form.business_type || null,
         logo_url: form.logo_url || null,
         color_palette: form.color_palette,
+        privacy_policy_url: form.privacy_policy_url || null,
       };
       const updated = await api.put<UserSettings>("/settings", payload);
       setSettings(updated);
@@ -308,6 +312,15 @@ setDisconnecting(true);
         <section className="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-glass p-5 space-y-4">
           <h2 className="font-semibold text-gray-800">General</h2>
           <Field label="URL del logo" value={form.logo_url} onChange={(v) => setForm({ ...form, logo_url: v })} placeholder="https://..." />
+          <Field
+            label="URL política de privacidad"
+            value={form.privacy_policy_url}
+            onChange={(v) => setForm({ ...form, privacy_policy_url: v })}
+            placeholder="https://tudominio.com/privacidad"
+          />
+          <p className="text-xs text-gray-500 -mt-2">
+            Obligatoria para crear formularios de Lead Ad. Se usa al auto-crear el formulario de una campaña con formulario instantáneo.
+          </p>
         </section>
 
         {/* Meta Ads — OAuth */}

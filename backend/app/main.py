@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings as app_settings
 from app.pubsub import CHANNEL_PREFIX
-from app.routers import auth, analytics, billing, plans, landings, campaigns, leads, uploads, recommendations, team, admin, closer_portal, client_accounts
+from app.routers import auth, analytics, billing, plans, landings, campaigns, leads, uploads, recommendations, team, admin, closer_portal, client_accounts, lead_forms
 from app.routers import settings as settings_router
 from app.routers import meta_oauth
 from app.services import stripe_service
@@ -38,6 +38,7 @@ app.include_router(team.router)
 app.include_router(admin.router)
 app.include_router(closer_portal.router)
 app.include_router(client_accounts.router)
+app.include_router(lead_forms.router)
 
 
 @app.get("/health")

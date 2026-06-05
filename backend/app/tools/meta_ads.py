@@ -62,6 +62,128 @@ async def _post(access_token: str, path: str, data: dict) -> dict:
     return body
 
 
+async def _post_form(access_token: str, path: str, data: dict) -> dict:
+    """POST form-encoded. Los endpoints de leadgen esperan los campos anidados
+    (questions, privacy_policy, thank_you_page) como strings JSON, no como objetos."""
+    url = f"{META_GRAPH_BASE}{path}"
+    logger.warning("META POST(form) %s payload=%s", path, json.dumps(data, ensure_ascii=False)[:3000])
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, params={"access_token": access_token}, data=data)
+    body = resp.json()
+    if "error" in body:
+        logger.error("META ERROR %s → %s", path, json.dumps(body["error"]))
+        raise MetaAdsError(body["error"].get("message", str(body["error"])))
+    return body
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Lead Ad forms (instant_form)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _slug(text: str) -> str:
+    base = "".join(c.lower() if c.isalnum() else "_" for c in (text or "")).strip("_")
+    return base[:40] or "opcion"
+
+
+def build_leadgen_questions(fields: list[dict]) -> list[dict]:
+    """Convierte la lista de campos de la plataforma al formato `questions` de Meta."""
+    questions: list[dict] = []
+    for f in fields or []:
+        if f.get("type") == "prefill" and f.get("key"):
+            questions.append({"type": str(f["key"]).upper()})
+        elif f.get("type") == "custom" and f.get("label"):
+            q: dict = {
+                "type": "CUSTOM",
+                "key": f.get("key") or _slug(f["label"]),
+                "label": f["label"],
+            }
+            if f.get("format") == "select" and f.get("options"):
+                q["options"] = [{"key": _slug(o), "value": o} for o in f["options"] if o]
+            questions.append(q)
+    if not questions:
+        questions = [{"type": "FULL_NAME"}, {"type": "EMAIL"}]
+    return questions
+
+
+async def create_leadgen_form(access_token: str, page_id: str, form_def: dict) -> str:
+    """Crea un formulario de Lead Ad en la Page de Meta y devuelve su id.
+
+    Meta exige `privacy_policy` con url. Los formularios son inmutables: editar en la
+    plataforma y re-sincronizar crea uno nuevo."""
+    privacy_url = (form_def.get("privacy_policy_url") or "").strip()
+    if not privacy_url:
+        raise MetaAdsError(
+            "Falta la URL de política de privacidad — obligatoria para crear el formulario en Meta."
+        )
+
+    payload: dict[str, Any] = {
+        "name": (form_def.get("name") or "Formulario")[:255],
+        "locale": form_def.get("locale") or "es_ES",
+        "questions": json.dumps(build_leadgen_questions(form_def.get("fields", [])), ensure_ascii=False),
+        "privacy_policy": json.dumps(
+            {
+                "url": privacy_url,
+                "link_text": form_def.get("privacy_policy_link_text") or "Política de privacidad",
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+    if form_def.get("intro_headline") or form_def.get("intro_description"):
+        payload["context_card"] = json.dumps(
+            {
+                "title": form_def.get("intro_headline") or form_def.get("name") or "",
+                "style": "PARAGRAPH_STYLE",
+                "content": form_def.get("intro_description") or "",
+                "button_text": "Continuar",
+            },
+            ensure_ascii=False,
+        )
+
+    ty_title = form_def.get("thank_you_title")
+    ty_url = (form_def.get("thank_you_website_url") or "").strip()
+    if ty_title or ty_url:
+        thank_you: dict = {
+            "title": ty_title or "¡Gracias!",
+            "body": form_def.get("thank_you_body") or "Nos pondremos en contacto pronto.",
+        }
+        btype = form_def.get("thank_you_button_type") or "VIEW_WEBSITE"
+        if btype == "VIEW_WEBSITE" and ty_url:
+            thank_you["button_type"] = "VIEW_WEBSITE"
+            thank_you["website_url"] = ty_url
+            thank_you["button_text"] = form_def.get("thank_you_button_text") or "Visitar web"
+        payload["thank_you_page"] = json.dumps(thank_you, ensure_ascii=False)
+
+    body = await _post_form(access_token, f"/{page_id}/leadgen_forms", payload)
+    form_id = str(body.get("id", ""))
+    if not form_id:
+        raise MetaAdsError("Meta no devolvió id de formulario")
+    return form_id
+
+
+def inject_lead_gen_form_id(campaign_json: dict, form_id: str) -> int:
+    """Inyecta `lead_gen_form_id` en el call_to_action de todos los ads (primario +
+    additional_ad_sets). Devuelve cuántos ads se actualizaron."""
+    count = 0
+
+    def _apply(ad: dict) -> None:
+        nonlocal count
+        link_data = (
+            ad.get("creative", {}).get("object_story_spec", {}).get("link_data", {})
+        )
+        value = link_data.get("call_to_action", {}).get("value")
+        if isinstance(value, dict):
+            value["lead_gen_form_id"] = form_id
+            count += 1
+
+    for ad in campaign_json.get("ads", []) or []:
+        _apply(ad)
+    for extra in campaign_json.get("additional_ad_sets", []) or []:
+        for ad in extra.get("ads", []) or []:
+            _apply(ad)
+    return count
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Insights & validation helpers
 # ──────────────────────────────────────────────────────────────────────────────
@@ -96,6 +218,189 @@ async def get_campaign_insights(access_token: str, campaign_id: str) -> dict:
         "cpp": float(row.get("cpp", 0)) if row.get("cpp") else None,
         "leads": leads,
     }
+
+
+def _hash_pii(value: str | None) -> str | None:
+    """SHA-256 normalizado (lowercase + trim) como exige Meta CAPI para PII."""
+    if not value:
+        return None
+    import hashlib
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+async def send_conversion_event(
+    access_token: str,
+    pixel_id: str,
+    event_name: str,
+    *,
+    email: str | None = None,
+    phone: str | None = None,
+    value: float | None = None,
+    currency: str = "EUR",
+    event_id: str | None = None,
+    event_source_url: str | None = None,
+    action_source: str = "system_generated",
+) -> bool:
+    """Envía un evento server-side a la Conversions API de Meta (atribución real).
+
+    Mejora la optimización de la campaña: cuando un lead cierra (Purchase) Meta
+    aprende qué audiencia/creativo trae ventas reales, no solo clics. `event_id`
+    permite deduplicar contra el pixel del navegador. Devuelve True si Meta lo aceptó.
+    No lanza — la conversión interna no debe romperse porque Meta falle.
+    """
+    if not pixel_id or not access_token:
+        return False
+    import time
+
+    user_data: dict[str, Any] = {}
+    em = _hash_pii(email)
+    ph = _hash_pii((phone or "").replace(" ", "").replace("+", ""))
+    if em:
+        user_data["em"] = [em]
+    if ph:
+        user_data["ph"] = [ph]
+    if not user_data:
+        return False
+
+    event: dict[str, Any] = {
+        "event_name": event_name,
+        "event_time": int(time.time()),
+        "action_source": action_source,
+        "user_data": user_data,
+    }
+    if event_id:
+        event["event_id"] = event_id
+    if event_source_url:
+        event["event_source_url"] = event_source_url
+    if value is not None:
+        event["custom_data"] = {"value": round(float(value), 2), "currency": currency}
+
+    try:
+        body = await _post(
+            access_token,
+            f"/{pixel_id}/events",
+            {"data": [event]},
+        )
+        return int(body.get("events_received", 0)) > 0
+    except Exception as exc:
+        logger.warning("send_conversion_event failed: %s", exc)
+        return False
+
+
+def _sum_actions(actions: list[dict], match: set[str]) -> int:
+    total = 0
+    for a in actions or []:
+        if a.get("action_type") in match:
+            try:
+                total += int(float(a.get("value", 0) or 0))
+            except (TypeError, ValueError):
+                continue
+    return total
+
+
+def _sum_action_values(action_values: list[dict], match: set[str]) -> float:
+    total = 0.0
+    for a in action_values or []:
+        if a.get("action_type") in match:
+            try:
+                total += float(a.get("value", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+    return total
+
+
+_LEAD_ACTIONS = {"lead", "leadgen_grouped", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"}
+_PURCHASE_ACTIONS = {"purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase"}
+_CONVERSION_ACTIONS = _LEAD_ACTIONS | _PURCHASE_ACTIONS
+
+# Breakdowns soportados (uno por llamada — Meta no combina todos libremente)
+SUPPORTED_BREAKDOWNS = ["age", "gender", "publisher_platform", "region", "impression_device"]
+
+
+async def fetch_insights(
+    access_token: str,
+    object_id: str,
+    *,
+    level: str = "campaign",
+    breakdown: str | None = None,
+    time_increment: int | str | None = None,
+    date_preset: str | None = "lifetime",
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 500,
+) -> list[dict]:
+    """Pull genérico de Meta Insights. Devuelve filas normalizadas.
+
+    - `level`: campaign | adset | ad (define qué ids trae cada fila)
+    - `breakdown`: uno de SUPPORTED_BREAKDOWNS o None
+    - `time_increment`: 1 = una fila por día (series temporales); None = agregado
+    - rango: `date_preset` (lifetime, last_7d, last_30d…) o `since`/`until` (YYYY-MM-DD)
+
+    Cada fila incluye: date_start, date_stop, campaign_id, adset_id, ad_id,
+    breakdown_key, breakdown_value, impressions, clicks, spend, reach, leads,
+    conversions, revenue, ctr, cpc, cpm. No lanza por errores de datos —
+    devuelve [] si Meta falla (es lectura, no debe romper el flujo).
+    """
+    fields = "impressions,clicks,spend,reach,cpc,ctr,cpm,actions,action_values"
+    params: dict[str, Any] = {
+        "access_token": access_token,
+        "fields": fields,
+        "level": level,
+        "limit": limit,
+    }
+    if since and until:
+        params["time_range"] = json.dumps({"since": since, "until": until})
+    elif date_preset:
+        params["date_preset"] = date_preset
+    if time_increment is not None:
+        params["time_increment"] = time_increment
+    if breakdown:
+        params["breakdowns"] = breakdown
+
+    url = f"{META_GRAPH_BASE}/{object_id}/insights"
+    rows: list[dict] = []
+    pages = 0
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            while url and pages < 25:
+                resp = await client.get(url, params=params if pages == 0 else None)
+                body = resp.json()
+                if "error" in body:
+                    logger.warning("fetch_insights error: %s", body["error"].get("message"))
+                    return rows
+                for row in body.get("data", []):
+                    actions = row.get("actions", [])
+                    action_values = row.get("action_values", [])
+                    leads = _sum_actions(actions, _LEAD_ACTIONS)
+                    conversions = _sum_actions(actions, _CONVERSION_ACTIONS)
+                    revenue = _sum_action_values(action_values, _PURCHASE_ACTIONS)
+                    rows.append({
+                        "date_start": row.get("date_start"),
+                        "date_stop": row.get("date_stop"),
+                        "campaign_id": row.get("campaign_id", ""),
+                        "adset_id": row.get("adset_id", ""),
+                        "ad_id": row.get("ad_id", ""),
+                        "breakdown_key": breakdown or "",
+                        "breakdown_value": str(row.get(breakdown, "")) if breakdown else "",
+                        "impressions": int(row.get("impressions", 0) or 0),
+                        "clicks": int(row.get("clicks", 0) or 0),
+                        "reach": int(row.get("reach", 0) or 0),
+                        "leads": leads,
+                        "conversions": conversions,
+                        "revenue": revenue,
+                        "spend": float(row.get("spend", 0) or 0),
+                        "ctr": float(row["ctr"]) if row.get("ctr") else None,
+                        "cpc": float(row["cpc"]) if row.get("cpc") else None,
+                        "cpm": float(row["cpm"]) if row.get("cpm") else None,
+                    })
+                url = body.get("paging", {}).get("next")
+                pages += 1
+    except Exception as exc:
+        logger.warning("fetch_insights failed: %s", exc)
+    return rows
 
 
 async def get_delivery_estimate(
@@ -732,3 +1037,61 @@ async def publish_campaign(
             f"{ad_account_id.replace('act_', '')}"
         ),
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Mutaciones post-publicación (OptimizationAgent → ejecución tras aprobación)
+# ──────────────────────────────────────────────────────────────────────────────
+
+VALID_ENTITY_STATUS = {"ACTIVE", "PAUSED"}
+
+
+async def _get(access_token: str, path: str, params: dict | None = None) -> dict:
+    url = f"{META_GRAPH_BASE}{path}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url, params={"access_token": access_token, **(params or {})})
+    body = resp.json()
+    if "error" in body:
+        logger.error("META GET ERROR %s → %s", path, json.dumps(body["error"]))
+        raise MetaAdsError(body["error"].get("message", str(body["error"])))
+    return body
+
+
+async def update_entity_status(access_token: str, entity_id: str, status: str) -> dict:
+    """Pausa o activa una entidad (campaign | ad set | ad). status ∈ ACTIVE | PAUSED."""
+    status = (status or "").upper()
+    if status not in VALID_ENTITY_STATUS:
+        raise MetaAdsError(f"Estado inválido '{status}'. Usa ACTIVE o PAUSED.")
+    return await _post(access_token, f"/{entity_id}", {"status": status})
+
+
+async def update_adset_budget(access_token: str, adset_id: str, daily_budget_cents: int) -> dict:
+    """Fija el presupuesto diario de un ad set (en céntimos, mínimo 100 = €1)."""
+    cents = max(100, int(daily_budget_cents))
+    return await _post(access_token, f"/{adset_id}", {"daily_budget": cents})
+
+
+async def update_campaign_budget(access_token: str, campaign_id: str, daily_budget_cents: int) -> dict:
+    """Fija el presupuesto diario de una campaña con CBO activo (en céntimos)."""
+    cents = max(100, int(daily_budget_cents))
+    return await _post(access_token, f"/{campaign_id}", {"daily_budget": cents})
+
+
+async def get_campaign_adsets(access_token: str, campaign_id: str) -> list[dict]:
+    """Lista los ad sets de una campaña con su presupuesto y estado actuales."""
+    body = await _get(
+        access_token,
+        f"/{campaign_id}/adsets",
+        {"fields": "id,name,daily_budget,lifetime_budget,status,effective_status", "limit": 200},
+    )
+    return body.get("data", [])
+
+
+async def get_campaign_budget(access_token: str, campaign_id: str) -> dict:
+    """Devuelve el presupuesto de la campaña (CBO) y si lo gestiona Meta a nivel campaña."""
+    body = await _get(
+        access_token,
+        f"/{campaign_id}",
+        {"fields": "daily_budget,lifetime_budget,status"},
+    )
+    return body

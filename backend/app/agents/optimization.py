@@ -160,13 +160,17 @@ class OptimizationAgent(BaseAgent):
         diferencia sea concluyente — si no lo es, el estado es `inconclusive`."""
         updated = [dict(a) for a in angles]
 
+        # Los ángulos ya pausados (por una redistribución aprobada) quedan fuera del
+        # pool: ni se reevalúan ni se reactivan — esa decisión es del usuario (undo).
+        active = [a for a in updated if a.get("status") != "paused"]
+
         # 1. ¿Quién tiene señal suficiente?
         def _has_signal(a: dict) -> bool:
             return (int(a.get("impressions") or 0) >= MIN_IMPRESSIONS_PER_ANGLE
                     and float(a.get("spend") or 0) >= MIN_SPEND_PER_ANGLE)
 
-        with_signal = [a for a in updated if _has_signal(a)]
-        for a in updated:
+        with_signal = [a for a in active if _has_signal(a)]
+        for a in active:
             if not _has_signal(a):
                 a["status"] = "insufficient_data"
 
@@ -323,6 +327,46 @@ class OptimizationAgent(BaseAgent):
         return merged[:3]
 
 
+def _aggregate_snapshots(db_session: Any, plan_id: Any) -> dict:
+    """Agrega metric_snapshots (nivel ad, sin breakdown) a totales de campaña.
+    Misma base que las alertas y el dashboard — una sola fuente de verdad."""
+    from sqlalchemy import func as sqlfunc, select
+    from app.models.metric_snapshot import MetricSnapshot
+
+    row = db_session.execute(
+        select(
+            sqlfunc.sum(MetricSnapshot.impressions),
+            sqlfunc.sum(MetricSnapshot.clicks),
+            sqlfunc.sum(MetricSnapshot.reach),
+            sqlfunc.sum(MetricSnapshot.leads),
+            sqlfunc.sum(MetricSnapshot.spend),
+            sqlfunc.sum(MetricSnapshot.revenue),
+        ).where(
+            MetricSnapshot.plan_id == plan_id,
+            MetricSnapshot.level == "ad",
+            MetricSnapshot.breakdown_key == "",
+        )
+    ).one()
+
+    impressions = int(row[0] or 0)
+    clicks = int(row[1] or 0)
+    reach = int(row[2] or 0)
+    leads = int(row[3] or 0)
+    spend = float(row[4] or 0)
+    revenue = float(row[5] or 0)
+    return {
+        "impressions": impressions,
+        "clicks": clicks,
+        "reach": reach,
+        "leads": leads,
+        "spend": spend,
+        "revenue": revenue,
+        "ctr": (clicks / impressions * 100) if impressions else 0.0,
+        "cpc": (spend / clicks) if clicks else None,
+        "cpm": (spend / impressions * 1000) if impressions else None,
+    }
+
+
 async def run_optimization_for_plan(
     plan_id: str,
     user_id: str,
@@ -346,20 +390,9 @@ async def run_optimization_for_plan(
     if not plan.meta_campaign_id:
         return []
 
-    settings = db_session.execute(
-        select(UserSettings).where(UserSettings.client_account_id == plan.client_account_id)
-    ).scalar_one_or_none()
-
-    meta_insights: dict = {}
-    if settings and settings.meta_access_token:
-        try:
-            import asyncio
-            from app.tools.meta_ads import get_campaign_insights
-            meta_insights = asyncio.run(
-                get_campaign_insights(settings.meta_access_token, plan.meta_campaign_id)
-            ) or {}
-        except Exception:
-            pass
+    # Fuente única de verdad: agregamos metric_snapshots (los puebla el beat horario),
+    # NO pegamos a Meta en vivo. Así el agente y las alertas leen los mismos números.
+    meta_insights = _aggregate_snapshots(db_session, uuid_mod.UUID(plan_id))
 
     # Calcular funnel metrics desde DB
     from app.models.lead import Lead
@@ -431,6 +464,17 @@ async def run_optimization_for_plan(
             _write_angle_performance(
                 db_session, plan, user_id, updated_angles, spend_total=spend
             )
+
+    # Dedup: las recomendaciones se regeneran cada corrida. Borramos las pendientes
+    # sin atender de este plan para no acumular duplicados; conservamos el historial
+    # (applied / failed / rejected / reverted).
+    from sqlalchemy import delete as sql_delete
+    db_session.execute(
+        sql_delete(Recommendation).where(
+            Recommendation.plan_id == uuid_mod.UUID(plan_id),
+            Recommendation.status == "pending",
+        )
+    )
 
     created_ids: list[str] = []
     for rec in recommendations:

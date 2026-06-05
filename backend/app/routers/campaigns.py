@@ -55,33 +55,50 @@ async def list_campaigns(
         .order_by(Plan.created_at.desc())
     )
     plans = plans_result.scalars().all()
+    if not plans:
+        return []
+
+    plan_ids = [p.id for p in plans]
+
+    # Batch: all landings, lead counts, tasks in 3 queries total
+    landings_result = await db.execute(
+        select(LandingPage).where(LandingPage.plan_id.in_(plan_ids))
+    )
+    all_landings = landings_result.scalars().all()
+
+    leads_count_result = await db.execute(
+        select(Lead.plan_id, func.count().label("cnt"))
+        .where(Lead.plan_id.in_(plan_ids))
+        .group_by(Lead.plan_id)
+    )
+    leads_by_plan: dict = {row.plan_id: row.cnt for row in leads_count_result}
+
+    tasks_result = await db.execute(
+        select(AgentTask).where(
+            AgentTask.plan_id.in_(plan_ids),
+            AgentTask.agent_name.in_(["AdsAgent", "CopyAgent", "EmailAgent"]),
+            AgentTask.status == "completed",
+        )
+    )
+    all_tasks = tasks_result.scalars().all()
+
+    # Index by plan_id
+    landings_by_plan: dict[uuid.UUID, list[LandingPage]] = {}
+    for l in all_landings:
+        landings_by_plan.setdefault(l.plan_id, []).append(l)
+
+    tasks_by_plan: dict[uuid.UUID, list[AgentTask]] = {}
+    for t in all_tasks:
+        tasks_by_plan.setdefault(t.plan_id, []).append(t)
 
     summaries: list[CampaignSummary] = []
     for plan in plans:
-        landings_result = await db.execute(
-            select(LandingPage).where(LandingPage.plan_id == plan.id)
-        )
-        landings = landings_result.scalars().all()
+        landings = landings_by_plan.get(plan.id, [])
+        tasks = tasks_by_plan.get(plan.id, [])
 
-        leads_count_result = await db.execute(
-            select(func.count()).where(Lead.plan_id == plan.id)
-        )
-        total_leads = leads_count_result.scalar() or 0
-
-        tasks_result = await db.execute(
-            select(AgentTask).where(
-                AgentTask.plan_id == plan.id,
-                AgentTask.agent_name.in_(["AdsAgent", "CopyAgent", "EmailAgent"]),
-                AgentTask.status == "completed",
-            )
-        )
-        tasks = tasks_result.scalars().all()
         ads_output = next((t.output for t in tasks if t.agent_name == "AdsAgent"), None)
         copy_output = next((t.output for t in tasks if t.agent_name == "CopyAgent"), None)
         email_output = next((t.output for t in tasks if t.agent_name == "EmailAgent"), None)
-
-        total_views = sum(l.views for l in landings)
-        total_conversions = sum(l.conversions for l in landings)
 
         summaries.append(
             CampaignSummary(
@@ -90,9 +107,9 @@ async def list_campaigns(
                 status=plan.status,
                 created_at=plan.created_at,
                 meta_campaign_id=plan.meta_campaign_id,
-                total_views=total_views,
-                total_conversions=total_conversions,
-                total_leads=total_leads,
+                total_views=sum(l.views for l in landings),
+                total_conversions=sum(l.conversions for l in landings),
+                total_leads=leads_by_plan.get(plan.id, 0),
                 landings=[
                     {
                         "id": l.id,
@@ -720,6 +737,17 @@ async def publish_meta_campaign(
         obj = campaign_json["campaign"].get("objective", "")
         campaign_json["campaign"]["objective"] = _objective_map.get(obj, obj)
 
+    # instant_form: resolver (o auto-crear) el Lead Ad form e inyectar su id en los ads
+    if (plan.funnel_type or "") == "instant_form":
+        from app.services.lead_forms import resolve_form_id_for_plan
+        from app.tools.meta_ads import inject_lead_gen_form_id
+        try:
+            form_id = await resolve_form_id_for_plan(db, plan, settings)
+        except MetaAdsError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        if form_id:
+            inject_lead_gen_form_id(campaign_json, form_id)
+
     try:
         result = await publish_campaign(
             access_token=settings.meta_access_token,
@@ -733,7 +761,28 @@ async def publish_meta_campaign(
         raise HTTPException(status_code=502, detail=f"Error Meta API: {e}")
 
     plan.meta_campaign_id = result["campaign_id"]
+
+    # Multi-Angle: mapear los ad_set_id reales de Meta a cada ángulo. El orden de
+    # publicación es [ad_set_id] + additional_ad_set_ids, alineado con angles_tested.
+    # Sin esto, el sync de métricas por ángulo y la redistribución no encuentran sus ad sets.
+    if (plan.ab_mode or "ab_classic") == "multi_angle" and plan.angles_tested:
+        adset_ids = [result.get("ad_set_id")] + list(result.get("additional_ad_set_ids") or [])
+        angles = [dict(a) for a in plan.angles_tested]
+        for angle, asid in zip(angles, adset_ids):
+            if asid:
+                angle["ad_set_id"] = str(asid)
+        plan.angles_tested = angles
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(plan, "angles_tested")
+
     await db.commit()
+
+    # Kick inicial del sync de métricas (el resto lo hace el beat horario)
+    try:
+        from app.workers.metrics_tasks import sync_metrics_for_plan
+        sync_metrics_for_plan.delay(str(plan.id))
+    except Exception:
+        pass
 
     return PublishResult(**result)
 
@@ -763,11 +812,20 @@ async def get_meta_insights(
     if not settings or not settings.meta_access_token:
         raise HTTPException(status_code=400, detail="Meta Access Token no configurado")
 
+    # Caché 15 min — evita pegar a Meta en cada carga del dashboard (rate limits)
+    from app.services.cache import cache_get, cache_set
+    cache_key = f"insights:{plan.meta_campaign_id}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return MetaInsights(**cached)
+
     try:
         data = await get_campaign_insights(settings.meta_access_token, plan.meta_campaign_id)
     except MetaAdsError as e:
         raise HTTPException(status_code=502, detail=f"Error Meta API: {e}")
 
+    if data:
+        await cache_set(cache_key, data, ttl_seconds=900)
     return MetaInsights(**data) if data else MetaInsights()
 
 

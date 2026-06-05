@@ -512,8 +512,12 @@ Aprobación usuario    → revisa JSON completo en forma de formulario, puede ed
     ↓
 Publicación           → AdsAgent POST a Meta Graph API
     ↓
-Métricas              → Dashboard propio lee Meta Insights API directamente
-                        (NO existe AnalyticsAgent — el dashboard hace polling)
+Métricas              → Worker de snapshots (cada 1h) guarda Meta Insights en
+                        `metric_snapshots`. El Dashboard lee de BD, NO pega a Meta.
+                        (NO existe AnalyticsAgent — ver "Sistema de Métricas y Analytics")
+    ↓
+Alertas               → reglas deterministas sobre snapshots (CPL spike, ROAS<1,
+                        gasto sin leads, CTR drop) → `metric_alerts`
     ↓
 Optimización          → OptimizationAgent (cada 24h) recomienda redistribuir
                         presupuesto a nivel de ángulo y creative
@@ -1014,7 +1018,10 @@ El `OptimizationAgent` monitorea métricas cada 24h y puede recomendar:
 │   │   │   ├── recommendation.py    # Recomendaciones del OptimizationAgent (+ campo reasoning)
 │   │   │   ├── client_account.py    # ✅ Workspaces multi-cliente (owner_id) — agregación por agencia
 │   │   │   ├── api_usage.py         # ✅ Registro de costes OpenAI por llamada/agente
-│   │   │   └── angle_performance.py  # ✅ histórico ángulo × business_type × resultado (Capa 7)
+│   │   │   ├── angle_performance.py  # ✅ histórico ángulo × business_type × resultado (Capa 7)
+│   │   │   ├── metric_snapshot.py    # ✅ snapshots diarios Meta Insights (ad + breakdowns) — series/breakdowns
+│   │   │   ├── metric_alert.py       # ✅ alertas automáticas sobre snapshots (cpl_spike/roas_low/...)
+│   │   │   └── lead_form.py          # ✅ Lead Ad forms (instant_form) sincronizados con Meta
 │   │   ├── schemas/
 │   │   │   ├── auth.py
 │   │   │   └── plan.py              # PlanResponse, CampaignWizardRequest, ResearchGenerateRequest, RejectRequest…
@@ -1025,19 +1032,20 @@ El `OptimizationAgent` monitorea métricas cada 24h y puede recomendar:
 │   │   │   ├── commissions.py       # ✅ generación automática de comisiones
 │   │   │   ├── closers.py           # ✅ lógica de closers
 │   │   │   ├── owner.py             # ✅ helpers de cuenta/owner
-│   │   │   └── openai_costs.py      # ✅ cálculo de coste por llamada OpenAI (→ api_usage)
+│   │   │   ├── openai_costs.py      # ✅ cálculo de coste por llamada OpenAI (→ api_usage)
+│   │   │   └── cache.py             # ✅ caché JSON en Redis (insights en vivo); degrada a no-op
 │   │   ├── routers/
 │   │   │   ├── auth.py              # login, register, refresh token + GET /me/features
 │   │   │   (chat.py eliminado — el chat ya no existe; la creación de campañas es vía POST /plans/wizard)
 │   │   │   ├── plans.py             # CRUD planes + approve/reject/resume + funnel-choice + creative-choice + export + POST /plans/research (librería) + POST /plans/wizard (crea campaña sin chat)
-│   │   │   ├── campaigns.py         # ✅ lista, meta-status, patch, publish, insights, leads
-│   │   │   ├── leads.py             # ✅ POST /leads — guarda lead + scoring + secuencia email/WA
+│   │   │   ├── campaigns.py         # ✅ lista, meta-status, patch, publish, meta-insights (caché), metrics, leads
+│   │   │   ├── leads.py             # ✅ POST /leads (scoring + secuencia) + PATCH pipeline + CAPI Purchase al cerrar
 │   │   │   ├── landings.py          # ✅ CRUD landing pages
 │   │   │   ├── settings.py          # ✅ user_settings (Meta, Resend, WhatsApp, paleta, company)
 │   │   │   ├── billing.py           # ✅ Stripe subscripción + webhook invoice.paid (genera comisiones)
 │   │   │   ├── meta_oauth.py        # ✅ OAuth Meta + refresh token
 │   │   │   ├── uploads.py           # ✅ subida de archivos a Cloudinary
-│   │   │   ├── analytics.py         # ✅ CPL, ROAS, funnel metrics + métricas por ángulo + angle-performance histórico
+│   │   │   ├── analytics.py         # ✅ /dashboard, /timeseries, /breakdown, /alerts + CPL/ROAS + por ángulo + angle-performance
 │   │   │   ├── recommendations.py   # ✅ GET/POST recomendaciones de OptimizationAgent
 │   │   │   ├── admin.py             # ✅ panel admin (superadmin only): closers, clientes, comisiones
 │   │   │   ├── closer_portal.py     # ✅ login y dashboard para closers (acceso independiente)
@@ -1057,11 +1065,14 @@ El `OptimizationAgent` monitorea métricas cada 24h y puede recomendar:
 │   │   │   └── meta_policy.py       # ✅ validación políticas Meta + humanización copy
 │   │   ├── tools/
 │   │   │   ├── brave_search.py      # Brave Search API client
-│   │   │   ├── meta_ads.py          # Meta Graph API helpers
+│   │   │   ├── meta_ads.py          # Meta Graph API helpers + fetch_insights() + send_conversion_event() (CAPI)
+│   │   │   ├── whatsapp.py          # send_whatsapp_text() vía Meta Cloud API
 │   │   │   └── resend.py            # send_email() async via Resend API
 │   │   └── workers/
-│   │       ├── celery_app.py        # include: [execution, email_tasks]
+│   │       ├── celery_app.py        # include: [execution, email_tasks, optimization_tasks, metrics_tasks] + beat (24h optimización, 1h métricas)
 │   │       ├── execution.py         # execute_plan task + enrutamiento de agentes + generate_research (research librería, sin pausas)
+│   │       ├── optimization_tasks.py # ✅ beat 24h: recomendaciones OptimizationAgent por campaña
+│   │       ├── metrics_tasks.py     # ✅ beat 1h: snapshots Meta Insights + sync ángulos en vivo + alertas
 │   │       └── email_tasks.py       # send_sequence_email Celery task (emails con delay)
 │   ├── alembic/
 │   │   └── versions/0001_initial.py
@@ -1079,7 +1090,7 @@ El `OptimizationAgent` monitorea métricas cada 24h y puede recomendar:
 │   │   ├── pages/
 │   │   │   ├── NewCampaign.tsx      # ✅ wizard visual por pasos (/campaigns/new) — reemplaza al chat
 │   │   │   ├── PlanWorkspace.tsx    # ✅ /plan/:id — renderiza ApprovalCard (aprobación + funnel/creative/ads)
-│   │   │   ├── Dashboard.tsx        # métricas globales (KPIs, embudo, charts)
+│   │   │   ├── Dashboard.tsx        # ✅ analytics global vía GET /analytics/dashboard: rango 7/30/90d, serie temporal, breakdowns, alertas
 │   │   │   ├── Campaigns.tsx        # tabla campañas, métricas, tabs Leads/Secuencias
 │   │   │   ├── LandingPage.tsx      # builder landing, preview A/B, publicar
 │   │   │   ├── ResearchLibrary.tsx  # ✅ pestaña /research: librería de research + "Generar nuevo" (modal) + drawer ResearchModeScreen
@@ -1365,6 +1376,83 @@ ROAS por ángulo      = revenue_ángulo / spent_ángulo
 
 Estas métricas se añaden a `campaigns` como campos calculados y se muestran en el dashboard de Campañas junto a los datos de Meta Insights.
 
+---
+
+## Sistema de Métricas y Analytics
+
+> **No hay AnalyticsAgent ni polling en vivo desde el dashboard.** Las métricas de Meta se **persisten en snapshots diarios** (cron horario) y el dashboard lee de BD. Esto da series temporales, breakdowns, comparación de periodos y alertas — y evita chocar el rate limit de Meta (la Graph/Marketing API es **gratuita**, pero limitada por nº de peticiones).
+
+### Pipeline de datos
+
+```
+Celery beat (cada 1h) → sync_metrics_for_all_campaigns
+    → por cada campaña publicada: sync_metrics_for_plan
+        → fetch_insights() a Meta (time_increment=1, ventana last_7d):
+            · nivel ad, sin breakdown            → granularidad fina por día
+            · nivel campaña × cada breakdown     → age, gender, publisher_platform,
+                                                    region, impression_device
+        → upsert idempotente en metric_snapshots (reescribe el día en curso)
+        → _sync_angles_from_snapshots()  → refresca plan.angles_tested en vivo
+        → _evaluate_alerts()             → crea/actualiza metric_alerts
+```
+
+- Al **publicar** una campaña se encola un primer `sync_metrics_for_plan` (kick inicial).
+- `fetch_insights()` (en `tools/meta_ads.py`) normaliza `actions`/`action_values` → leads, conversiones, revenue. Es la única función de lectura flexible (level, breakdown, time_increment, rango).
+- El endpoint legacy `GET /campaigns/:id/meta-insights` sigue pegando a Meta **en vivo pero con caché Redis 15 min** (`services/cache.py`, degrada a no-op si Redis falla).
+
+### Tabla: `metric_snapshots` (migración `0028_metric_snapshots`)
+
+```
+id UUID
+client_account_id FK, plan_id FK
+meta_campaign_id / meta_adset_id / meta_ad_id   string  # "" cuando no aplica (no NULL → unique limpio)
+level             string   # campaign | adset | ad
+angle             string | null   # derivado de plan.angles_tested por ad set (multi_angle)
+breakdown_key     string   # "" | age | gender | publisher_platform | region | impression_device
+breakdown_value   string   # "" | "25-34" | "female" | "facebook" ...
+snapshot_date     date     # día de los datos (time_increment=1)
+impressions, clicks, reach, leads, conversions  int
+spend, revenue    Decimal
+ctr, cpc, cpm, cpl  Decimal | null
+UNIQUE (plan_id, level, meta_adset_id, meta_ad_id, breakdown_key, breakdown_value, snapshot_date)
+```
+
+### Tabla: `metric_alerts` (migración `0029_metric_alerts`)
+
+Alertas automáticas **sin LLM**, generadas por el worker tras cada sync. A diferencia de `recommendations` (OptimizationAgent propone una acción a aprobar), una alerta solo **avisa** y el usuario la descarta.
+
+```
+id UUID, client_account_id FK, plan_id FK
+type        string   # cpl_spike | roas_low | spend_no_leads | ctr_drop
+severity    string   # info | warning | critical
+title, message  string/text     # mensaje en lenguaje de media buyer, con números
+metric_key, current_value, baseline_value
+status      string   # active | dismissed
+snapshot_date date
+UNIQUE (plan_id, type, snapshot_date)   # idempotente: 1 alerta por tipo/plan/día
+```
+
+Reglas (alineadas con OptimizationAgent / Multi-Angle): `cpl_spike` (CPL hoy >130% de ayer), `ctr_drop` (CTR<0.5% con >3k impresiones), `spend_no_leads` (≥€30 sin un lead, crítica), `roas_low` (ROAS<1x con revenue atribuido).
+
+### Atribución server-side (CAPI)
+
+Cuando un lead pasa a `lead_status = "closed"` (PATCH `/leads/:id`), se envía un evento **`Purchase` a la Conversions API de Meta** (`send_conversion_event` en `tools/meta_ads.py`): PII (email/teléfono) hasheada SHA-256, `value = closed_value`, `event_id = lead-{id}-closed` para deduplicar contra el pixel web. Requiere `meta_pixel_id` + `meta_access_token` en Settings. No bloquea el PATCH si Meta falla. Así Meta aprende qué audiencia/creativo trae ventas reales, no solo clics.
+
+### Endpoints de analytics
+
+```
+GET  /analytics/dashboard?days=30          → 1 sola llamada: totals + timeseries +
+                                             by_campaign + by_placement + by_device + alerts (desde snapshots)
+GET  /analytics/campaign/:id/timeseries?days=  → serie diaria de la campaña
+GET  /analytics/campaign/:id/breakdown?key=age → agregado por dimensión
+GET  /analytics/alerts?status=active        → alertas del account
+POST /analytics/alerts/:id/dismiss          → descarta una alerta
+GET  /analytics/overview                    → (legacy) overview por campaña
+GET  /analytics/campaign/:id/angles         → rendimiento por ángulo (multi_angle)
+```
+
+El `Dashboard.tsx` consume `GET /analytics/dashboard`: selector de rango (7/30/90 días), gráfica temporal conmutable (gasto, leads, clics, CTR, CPL, revenue…), breakdowns por plataforma/dispositivo y panel de alertas descartables.
+
 ### Settings del usuario (`user_settings`)
 
 ```
@@ -1437,10 +1525,10 @@ teal      #14b8a6 / #ccfbf1    → bienestar, RRHH, comunidad
 
 **Backend — Routers:**
 
-- `auth`, `chat`, `plans` (+ resume-copy/ads, funnel-choice, creative-choice)
-- `campaigns` (lista, meta-status, patch, publish, insights, meta-insights)
-- `leads`, `landings`, `settings`, `billing`, `meta_oauth`, `uploads`
-- `analytics` (CPL real, ROAS, funnel metrics)
+- `auth`, `plans` (+ resume-copy/ads, funnel-choice, creative-choice, wizard, research) — el chat fue eliminado
+- `campaigns` (lista, meta-status, patch, publish, meta-insights con caché, metrics)
+- `leads` (POST + PATCH pipeline + CAPI), `landings`, `settings`, `billing`, `meta_oauth`, `uploads`, `lead_forms`
+- `analytics` (dashboard, timeseries, breakdown, alerts, CPL/ROAS, por ángulo, angle-performance)
 - `recommendations` (GET/POST recomendaciones OptimizationAgent)
 - `admin` ✅ (overview, clientes, closers, comisiones — superadmin only)
 - `closer_portal` ✅ (login, me, dashboard — acceso independiente para closers)
@@ -1448,12 +1536,12 @@ teal      #14b8a6 / #ccfbf1    → bienestar, RRHH, comunidad
 
 **Backend — Modelos DB:**
 
-- `users` (con roles, parent_account, founder, superadmin, closer_id)
+- `users` (con roles, parent_account, founder, superadmin, closer_id, scans_remaining)
 - `user_settings` (+ company_profile fields)
-- `plans` (con creative_type, nuevos estados de approval)
-- `tasks`, `chat_sessions`, `chat_messages`
-- `landing_pages` (con template_id), `leads` (con pipeline status), `lead_magnets`, `sequence_events`
-- `closer` ✅, `commission` ✅, `recommendation`
+- `plans` (con creative_type, ab_mode, angles_tested, research_export, nuevos estados de approval)
+- `tasks` (las tablas `chat_sessions`/`chat_messages` quedan en BD sin uso — chat eliminado, no se hace DROP)
+- `landing_pages` (con template_id), `leads` (con pipeline status), `lead_magnets`, `sequence_events`, `lead_forms`
+- `closer` ✅, `commission` ✅, `recommendation` ✅, `angle_performance` ✅, `metric_snapshot` ✅, `metric_alert` ✅
 
 **Frontend — Páginas:**
 
@@ -1569,7 +1657,20 @@ teal      #14b8a6 / #ccfbf1    → bienestar, RRHH, comunidad
 - ✅ `billing.py` / `stripe_service.py` — suscripción mensual de research (`research_10`/`research_100`, prices auto-creados sin fundador, `GET /billing/research-plans`); `_sync_subscription` recarga `scans_remaining` al activar/renovar; `POST /plans/research` descuenta 1 escaneo por research generado vía `consume_scan` (402 sin saldo)
 - ✅ Frontend — `authStore` (`fetchFeatures`/`hasFeature` desde `/auth/me/features`); `FunnelTypeSelector` bloquea Multi-Angle/Research con badge "Disponible en Growth/Starter+"
 
-> **Nota de despliegue:** las migraciones `0025_multi_angle_research` y `0026_angle_performance` aún deben aplicarse con `alembic upgrade head`.
+**Capa 9 — Sistema de Métricas y Analytics** ✅
+
+Ver sección "Sistema de Métricas y Analytics" para el detalle.
+
+- ✅ Migración `0028_metric_snapshots` — snapshots diarios Meta Insights (ad + breakdowns), upsert idempotente
+- ✅ `tools/meta_ads.py` — `fetch_insights()` (level/breakdown/time_increment/rango) + `send_conversion_event()` (CAPI Purchase)
+- ✅ `workers/metrics_tasks.py` — beat horario: snapshots + `_sync_angles_from_snapshots` (multi_angle en vivo) + `_evaluate_alerts`
+- ✅ Migración `0029_metric_alerts` — alertas automáticas (cpl_spike, roas_low, spend_no_leads, ctr_drop)
+- ✅ `services/cache.py` — caché Redis para `meta-insights` en vivo (15 min)
+- ✅ `analytics.py` — `/dashboard`, `/timeseries`, `/breakdown`, `/alerts` (+ dismiss)
+- ✅ `leads.py` — CAPI `Purchase` server-side al marcar lead `closed`
+- ✅ `Dashboard.tsx` — 1 llamada a `/analytics/dashboard`: rango 7/30/90d, serie temporal, breakdowns, panel de alertas
+
+> **Nota de despliegue:** las migraciones `0025_multi_angle_research`, `0026_angle_performance`, `0027_lead_forms`, `0028_metric_snapshots` y `0029_metric_alerts` aún deben aplicarse con `alembic upgrade head`.
 
 ## EmailAgent — post_conversion_goal
 
@@ -1597,6 +1698,8 @@ El `post_conversion_goal` se propaga desde el Orchestrator a todos los steps. El
 * **No redistribuir presupuesto entre ángulos** automáticamente — el `angle_redistribute` siempre propone, el usuario aprueba
 * **No declarar ganador/perdedor un ángulo** antes de la señal mínima (3k impresiones / €30 por ad set) **ni sin significancia estadística** — si la diferencia no es concluyente, el estado es `inconclusive`, no `winner`
 * **No mostrar recomendaciones como caja negra** — toda recomendación del OptimizationAgent lleva un `reasoning` con los números que la justifican
+* **No pegar a Meta Insights en vivo desde el dashboard** — leer de `metric_snapshots` (los pobla el beat horario). El único punto que pega en vivo es `meta-insights`, y va con caché Redis
+* **No duplicar snapshots/alertas** — el upsert es idempotente por su clave única (snapshot: plan+level+adset+ad+breakdown+día; alerta: plan+tipo+día)
 * **No reutilizar la misma imagen para todos los ángulos** en `multi_angle` — cada ángulo lleva su propia imagen DALL-E coherente con su mensaje
 * **No calcular comisiones a mano** — siempre automáticas desde webhook de Stripe
 * **No asignar roles** desde fuera del endpoint `/team/invite` — solo el owner puede hacerlo

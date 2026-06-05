@@ -66,6 +66,11 @@ class Plan(Base):
     sale_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     redirect_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     creative_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Lead Ad form (instant_form): plantilla seleccionada por el usuario; si null y el
+    # funnel es instant_form, se auto-crea un form por defecto al publicar.
+    lead_form_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("lead_forms.id"), nullable=True
+    )
     creative_a: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     creative_b: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     ab_testing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

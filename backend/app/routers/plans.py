@@ -13,9 +13,10 @@ from app.models.plan import Plan, PlanStatus
 from app.models.task import AgentTask, TaskStatus
 from app.models.user import User
 from app.models.user_settings import UserSettings
-from app.schemas.plan import PlanResponse, RejectRequest, AgentTaskResponse, ResumeCopyRequest, ResumeAdsRequest, PublishMetaResponse, FunnelChoiceRequest, CreativeChoiceRequest, OfferTestRequest, ResearchGenerateRequest, CampaignWizardRequest, GenerateImagesRequest, GenerateImagesResponse
+from app.schemas.plan import PlanResponse, RejectRequest, AgentTaskResponse, ResumeCopyRequest, ResumeAdsRequest, PublishMetaResponse, FunnelChoiceRequest, CreativeChoiceRequest, OfferTestRequest, ResearchGenerateRequest, CampaignWizardRequest, GenerateImagesRequest, GenerateImagesResponse, MessageMatchResponse
 from app.pubsub import async_publish_event
 from app.services import permissions
+from app.services.message_match import gather_message_match
 
 router = APIRouter(prefix="/plans", tags=["plans"])
 
@@ -315,6 +316,24 @@ async def resume_after_ads(
     return plan
 
 
+@router.get("/{plan_id}/message-match", response_model=MessageMatchResponse)
+async def get_message_match(
+    plan_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    client_account: ClientAccount = Depends(get_active_client_account),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Valida el hilo narrativo (hook ↔ landings ↔ emails) + políticas Meta.
+    Lo consume el panel de aprobación para mostrar warnings antes de publicar."""
+    result = await db.execute(
+        select(Plan).where(Plan.id == plan_id, Plan.client_account_id == client_account.id)
+    )
+    plan = result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return await gather_message_match(db, plan)
+
+
 def _build_funnel_steps(
     base_step: dict,
     funnel_type: str,
@@ -495,6 +514,19 @@ async def funnel_choice(
     plan.funnel_type = body.funnel_type
     plan.sale_type = body.sale_type
     plan.redirect_url = body.redirect_url
+
+    # Lead Ad form: solo aplica a instant_form. Validar pertenencia a la cuenta.
+    if body.funnel_type == "instant_form" and body.lead_form_id:
+        from app.models.lead_form import LeadForm
+        owns = (await db.execute(
+            select(LeadForm.id).where(
+                LeadForm.id == body.lead_form_id,
+                LeadForm.client_account_id == client_account.id,
+            )
+        )).scalar_one_or_none()
+        if not owns:
+            raise HTTPException(status_code=404, detail="Formulario no encontrado")
+        plan.lead_form_id = body.lead_form_id
 
     existing_steps = list(plan.steps or [])
     template_step: dict = {}
@@ -843,7 +875,18 @@ async def publish_to_meta(
     if not campaign_json:
         raise HTTPException(status_code=400, detail="campaign_json no encontrado en output del AdsAgent")
 
-    from app.tools.meta_ads import publish_campaign, MetaAdsError
+    from app.tools.meta_ads import publish_campaign, MetaAdsError, inject_lead_gen_form_id
+
+    # instant_form: resolver (o auto-crear) el Lead Ad form e inyectar su id en los ads
+    if (plan.funnel_type or "") == "instant_form":
+        from app.services.lead_forms import resolve_form_id_for_plan
+        try:
+            form_id = await resolve_form_id_for_plan(db, plan, user_settings)
+        except MetaAdsError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        if form_id:
+            inject_lead_gen_form_id(campaign_json, form_id)
+
     try:
         company = user_settings.company_name or current_user.email or "Anunciante"
         result = await publish_campaign(

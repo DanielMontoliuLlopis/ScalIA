@@ -223,7 +223,10 @@ class AdsAgent(BaseAgent):
     # Intereses
     # ------------------------------------------------------------------
 
-    async def _search_meta_interest(self, keyword: str, access_token: str) -> dict | None:
+    async def _search_meta_interest(self, keyword: str, access_token: str) -> list[dict]:
+        """Devuelve hasta 3 intereses reales de Meta para una keyword (ordenados por
+        relevancia/audiencia). Antes solo se quedaba con el primero y se descartaban
+        los otros 2 que la API ya trae, dejando ad sets con muy pocos intereses."""
         try:
             async with httpx.AsyncClient(timeout=8) as client:
                 r = await client.get(
@@ -237,12 +240,10 @@ class AdsAgent(BaseAgent):
                     },
                 )
                 items = r.json().get("data", [])
-                if items:
-                    top = items[0]
-                    return {"id": str(top["id"]), "name": top["name"]}
+                return [{"id": str(it["id"]), "name": it["name"]} for it in items[:3]]
         except Exception:
             pass
-        return None
+        return []
 
     def _extract_interest_keywords(self, research: dict) -> list[str]:
         """Extrae keywords concisos del research aptos para buscar en Meta Ads."""
@@ -342,14 +343,14 @@ class AdsAgent(BaseAgent):
         interests: list[dict] = []
 
         for kw in keywords:
-            result = await self._search_meta_interest(kw, access_token)
-            if result and result["id"] not in seen_ids:
+            for result in await self._search_meta_interest(kw, access_token):
+                if result["id"] in seen_ids:
+                    continue
                 seen_ids.add(result["id"])
                 interests.append(result)
-            if len(interests) >= 8:
-                break
-
-        return interests[:10]
+                if len(interests) >= 8:
+                    return interests
+        return interests
 
     # ------------------------------------------------------------------
     # Builder principal
@@ -808,14 +809,18 @@ class AdsAgent(BaseAgent):
                 errors.append("Falta meta_page_id en Settings del usuario.")
                 break
 
-        # ── lead_gen_form_id (obligatorio si instant_form) ─────────────
+        # ── lead_gen_form_id (instant_form) ────────────────────────────
+        # No es bloqueante: el formulario se resuelve/auto-crea e inyecta al publicar
+        # (ver services/lead_forms.py). Aquí solo avisamos.
         if funnel_type == "instant_form":
             for ad in campaign_json.get("ads", []):
                 link_data = ad.get("creative", {}).get("object_story_spec", {}).get("link_data", {})
                 cta = link_data.get("call_to_action", {}).get("value", {})
                 form_id = str(cta.get("lead_gen_form_id", ""))
                 if form_id.startswith("{{") or not form_id:
-                    errors.append("Falta lead_gen_form_id — crear formulario en Meta Page primero.")
+                    warnings.append(
+                        "El formulario de Lead Ad se creará al publicar (o elige uno en Formularios)."
+                    )
                     break
 
         # ── pixel_id (solo obligatorio si optimization_goal lo exige) ──
@@ -1106,82 +1111,102 @@ class AdsAgent(BaseAgent):
         self, campaign_json: dict, opt: dict, step: dict, funnel_cfg: dict
     ) -> list[str]:
         """Mezcla los parámetros optimizados en el campaign_json. Devuelve notas
-        legibles de lo aplicado (para mostrar al usuario)."""
+        legibles de lo aplicado (para mostrar al usuario).
+
+        Los ajustes de entrega/targeting se aplican al ad set primario Y a todos los
+        `additional_ad_sets` (los ad sets por ángulo en multi_angle), para que toda la
+        campaña tenga la misma edad, género, puja, atribución y saneado. Si no, los ad
+        sets de ángulo quedarían sin optimizar y, con categoría restringida, Meta podría
+        rechazar la campaña entera."""
         notes: list[str] = []
         campaign = campaign_json["campaign"]
-        ad_set = campaign_json["ad_set"]
-        targeting = ad_set["targeting"]
+        ad_sets: list[dict] = [campaign_json["ad_set"], *campaign_json.get("additional_ad_sets", [])]
 
-        # ── Edad ──
-        if "age_min" in opt and "age_max" in opt:
-            if (opt["age_min"], opt["age_max"]) != (targeting.get("age_min"), targeting.get("age_max")):
-                targeting["age_min"] = opt["age_min"]
-                targeting["age_max"] = opt["age_max"]
-                notes.append(f"Edad ajustada al ICP: {opt['age_min']}-{opt['age_max']}")
+        restrictive = "special_ad_categories" in opt and any(
+            c in _OPT_RESTRICTIVE_CATS for c in opt["special_ad_categories"]
+        )
+        urgencia = step.get("urgencia", "sin_urgencia") or "sin_urgencia"
+        end_iso: str | None = None
+        if "deadline_days" in opt and urgencia != "sin_urgencia":
+            end_iso = (datetime.now(timezone.utc) + timedelta(days=opt["deadline_days"])).replace(
+                microsecond=0
+            ).isoformat()
 
-        # ── Géneros ──
-        if "genders" in opt:
-            targeting["genders"] = opt["genders"]
-            label = "hombres" if opt["genders"] == [1] else "mujeres"
-            notes.append(f"Segmentación por género: {label}")
-
-        # ── Estrategia de puja ──
+        # ── Ajustes a nivel campaña (una vez) ──
         if "bid_strategy" in opt:
             campaign["bid_strategy"] = opt["bid_strategy"]
-            ad_set["bid_strategy"] = opt["bid_strategy"]
-            if "bid_amount" in opt:
-                ad_set["bid_amount"] = opt["bid_amount"]
-                # bid_amount a nivel campaña no aplica con CBO daily; va en ad set
-                notes.append(
-                    f"Puja {opt['bid_strategy']} con coste objetivo €{opt['bid_amount'] / 100:.2f}"
-                )
-            else:
-                notes.append(f"Estrategia de puja: {opt['bid_strategy']}")
-
-        # ── Pacing ──
-        if "pacing_type" in opt:
-            ad_set["pacing_type"] = opt["pacing_type"]
-            if opt["pacing_type"] == ["no_pacing"]:
-                notes.append("Entrega acelerada (no_pacing)")
-
-        # ── Frequency cap ──
-        if "frequency_control_specs" in opt:
-            ad_set["frequency_control_specs"] = opt["frequency_control_specs"]
-            f0 = opt["frequency_control_specs"][0]
-            notes.append(
-                f"Frequency cap: máx {f0['max_frequency']} cada {f0['interval_days']}d"
-            )
-
-        # ── Atribución ──
-        ad_set["attribution_spec"] = opt.get(
-            "attribution_spec", self._default_attribution(funnel_cfg["optimization_goal"])
-        )
-
-        # ── Categorías especiales + saneado de targeting que Meta exige ──
         if "special_ad_categories" in opt:
-            cats = opt["special_ad_categories"]
-            campaign["special_ad_categories"] = cats
-            notes.append(f"Categorías especiales: {', '.join(cats)}")
-            if any(c in _OPT_RESTRICTIVE_CATS for c in cats):
-                targeting.pop("genders", None)
-                targeting["age_min"] = 18
-                targeting["age_max"] = 65
-                targeting.pop("flexible_spec", None)
-                targeting.get("targeting_automation", {}).pop("advantage_audience", None)
+            campaign["special_ad_categories"] = opt["special_ad_categories"]
+            notes.append(f"Categorías especiales: {', '.join(opt['special_ad_categories'])}")
+            if restrictive:
                 # Evitar que publish_campaign re-inyecte intereses vía keywords
                 campaign_json["interest_keywords"] = []
                 notes.append(
                     "Targeting saneado por categoría restringida (sin género, edad 18-65, sin intereses)"
                 )
 
-        # ── Fecha límite por urgencia → end_time del ad set ──
-        urgencia = step.get("urgencia", "sin_urgencia") or "sin_urgencia"
-        if "deadline_days" in opt and urgencia != "sin_urgencia":
-            end_dt = (datetime.now(timezone.utc) + timedelta(days=opt["deadline_days"])).replace(
-                microsecond=0
-            )
-            ad_set["end_time"] = end_dt.isoformat()
-            notes.append(f"Fin de campaña en {opt['deadline_days']} días por urgencia de la oferta")
+        # ── Ajustes a nivel ad set (a todos: primario + ángulos) ──
+        default_attr = opt.get(
+            "attribution_spec", self._default_attribution(funnel_cfg["optimization_goal"])
+        )
+        for i, ad_set in enumerate(ad_sets):
+            first = i == 0  # las notas legibles se emiten una sola vez
+            targeting = ad_set.setdefault("targeting", {})
+
+            if "age_min" in opt and "age_max" in opt:
+                changed = (opt["age_min"], opt["age_max"]) != (
+                    targeting.get("age_min"), targeting.get("age_max")
+                )
+                targeting["age_min"] = opt["age_min"]
+                targeting["age_max"] = opt["age_max"]
+                if first and changed:
+                    notes.append(f"Edad ajustada al ICP: {opt['age_min']}-{opt['age_max']}")
+
+            if "genders" in opt:
+                targeting["genders"] = opt["genders"]
+                if first:
+                    label = "hombres" if opt["genders"] == [1] else "mujeres"
+                    notes.append(f"Segmentación por género: {label}")
+
+            if "bid_strategy" in opt:
+                ad_set["bid_strategy"] = opt["bid_strategy"]
+                if "bid_amount" in opt:
+                    ad_set["bid_amount"] = opt["bid_amount"]
+                    if first:
+                        notes.append(
+                            f"Puja {opt['bid_strategy']} con coste objetivo €{opt['bid_amount'] / 100:.2f}"
+                        )
+                elif first:
+                    notes.append(f"Estrategia de puja: {opt['bid_strategy']}")
+
+            if "pacing_type" in opt:
+                ad_set["pacing_type"] = opt["pacing_type"]
+                if first and opt["pacing_type"] == ["no_pacing"]:
+                    notes.append("Entrega acelerada (no_pacing)")
+
+            if "frequency_control_specs" in opt:
+                ad_set["frequency_control_specs"] = opt["frequency_control_specs"]
+                if first:
+                    f0 = opt["frequency_control_specs"][0]
+                    notes.append(
+                        f"Frequency cap: máx {f0['max_frequency']} cada {f0['interval_days']}d"
+                    )
+
+            ad_set["attribution_spec"] = self._clone(default_attr)
+
+            if restrictive:
+                targeting.pop("genders", None)
+                targeting["age_min"] = 18
+                targeting["age_max"] = 65
+                targeting.pop("flexible_spec", None)
+                targeting.get("targeting_automation", {}).pop("advantage_audience", None)
+
+            if end_iso:
+                ad_set["end_time"] = end_iso
+                if first:
+                    notes.append(
+                        f"Fin de campaña en {opt['deadline_days']} días por urgencia de la oferta"
+                    )
 
         return notes
 

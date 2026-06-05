@@ -78,6 +78,8 @@ class FunnelChoiceRequest(BaseModel):
     # Modo de testeo
     ab_mode: str = "ab_classic"  # ab_classic | multi_angle
     num_angles: int | None = None  # 2-6, solo si multi_angle
+    # Lead Ad form (instant_form): plantilla a usar; si null se auto-crea al publicar
+    lead_form_id: uuid.UUID | None = None
     # Salida temprana: solo research + ángulos, sin funnel
     research_export: bool = False
 
@@ -156,6 +158,14 @@ class CreativeChoiceRequest(BaseModel):
     creative_type: str  # image_ai | image_upload | video_upload | reel_upload | meta_post
     creative_a: CreativeAsset | None = None
     creative_b: CreativeAsset | None = None
+
+
+class MessageMatchResponse(BaseModel):
+    """Validación del hilo narrativo + políticas Meta para el panel de aprobación."""
+    hook: str = ""
+    warnings: list[str] = []          # message match (hook ↔ landings ↔ emails)
+    policy_warnings: list[str] = []   # problemas detectados por MetaPolicyAgent
+    policy_status: str | None = None  # approved | approved_with_fixes | rejected
 
 
 class PublishMetaResponse(BaseModel):

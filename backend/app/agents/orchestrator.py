@@ -144,7 +144,7 @@ class OrchestratorAgent(BaseAgent):
         allow_clarification: bool = True,
         company_profile: dict | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(user_id=user_id, agent_name="OrchestratorAgent")
         self.system_prompt = SYSTEM_PROMPT
 
         if company_profile:

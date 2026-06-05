@@ -157,6 +157,10 @@ async def update_lead_pipeline(
     await db.commit()
     await db.refresh(lead)
 
+    # CAPI: lead cerrado → enviar Purchase server-side a Meta (atribución real)
+    if body.lead_status == "closed":
+        await _send_purchase_capi(db, lead)
+
     events = (await db.execute(
         select(SequenceEvent).where(SequenceEvent.lead_id == lead.id).order_by(SequenceEvent.order.asc())
     )).scalars().all()
@@ -201,6 +205,33 @@ async def update_lead_pipeline(
         closed_at=lead.closed_at,
         created_at=lead.created_at,
     )
+
+
+async def _send_purchase_capi(db: AsyncSession, lead: Lead) -> None:
+    """Envía un evento Purchase a la Conversions API de Meta cuando un lead cierra.
+
+    Requiere meta_pixel_id + meta_access_token en Settings. No bloquea ni rompe el
+    PATCH si Meta falla. event_id idempotente para deduplicar contra el pixel web.
+    """
+    try:
+        settings = (await db.execute(
+            select(UserSettings).where(UserSettings.client_account_id == lead.client_account_id)
+        )).scalar_one_or_none()
+        if not settings or not settings.meta_pixel_id or not settings.meta_access_token:
+            return
+        from app.tools.meta_ads import send_conversion_event
+        await send_conversion_event(
+            access_token=settings.meta_access_token,
+            pixel_id=settings.meta_pixel_id,
+            event_name="Purchase",
+            email=lead.email,
+            phone=lead.telefono,
+            value=float(lead.closed_value) if lead.closed_value is not None else None,
+            currency="EUR",
+            event_id=f"lead-{lead.id}-closed",
+        )
+    except Exception as exc:
+        print(f"[Leads] CAPI purchase failed: {exc}")
 
 
 async def _trigger_sequences(

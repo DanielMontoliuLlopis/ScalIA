@@ -48,6 +48,7 @@ export function ResearchModeScreen({ plan }: Props) {
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -283,11 +284,20 @@ export function ResearchModeScreen({ plan }: Props) {
             <article className="mt-5 rounded-2xl border border-amber-900/40 bg-gradient-to-b from-amber-950/30 to-transparent p-6">
               <div className="flex flex-col sm:flex-row gap-6">
                 {active.image_url ? (
-                  <img
-                    src={active.image_url}
-                    alt={active.angle}
-                    className="w-full sm:w-40 h-40 rounded-xl object-cover flex-shrink-0 border border-amber-900/40"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setLightbox(active.image_url)}
+                    className="no-print group relative flex-shrink-0 cursor-zoom-in"
+                  >
+                    <img
+                      src={active.image_url}
+                      alt={active.angle}
+                      className="w-full sm:w-40 h-40 rounded-xl object-cover border border-amber-900/40 transition-opacity group-hover:opacity-80"
+                    />
+                    <span className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/30 opacity-0 transition-opacity group-hover:opacity-100 text-white text-lg">
+                      🔍
+                    </span>
+                  </button>
                 ) : (
                   <div className="no-print w-full sm:w-40 h-40 rounded-xl flex-shrink-0 border border-dashed border-amber-800/50 bg-amber-950/20 flex flex-col items-center justify-center text-center px-2">
                     <span className="text-[11px] text-amber-200/40 leading-snug">
@@ -427,6 +437,28 @@ export function ResearchModeScreen({ plan }: Props) {
           </p>
         )}
       </footer>
+
+      {/* Lightbox imagen ampliada */}
+      {lightbox && (
+        <div
+          className="no-print fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
+          onClick={() => setLightbox(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setLightbox(null)}
+            className="absolute top-4 right-4 text-white/80 hover:text-white text-3xl leading-none font-bold"
+          >
+            ✕
+          </button>
+          <img
+            src={lightbox}
+            alt="Imagen ampliada"
+            className="max-w-[90vw] max-h-[90vh] object-contain rounded-xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -1,16 +1,32 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../../lib/api";
 
+interface AppliedResult {
+  status: "applied" | "manual" | "failed";
+  executed: boolean;
+  detail: string;
+  changes: Record<string, unknown>[];
+}
+
 interface Recommendation {
   id: string;
   plan_id: string;
   type: string;
   reasoning: string;
   action_payload: Record<string, unknown>;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "applied" | "failed" | "reverted";
   applied_at: string | null;
+  applied_result: AppliedResult | null;
   created_at: string;
 }
+
+const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
+  applied:  { label: "Aplicado en Meta", cls: "bg-green-100 text-green-700" },
+  approved: { label: "Aprobado (manual)", cls: "bg-sky-100 text-sky-700" },
+  failed:   { label: "Falló en Meta",    cls: "bg-red-100 text-red-700" },
+  rejected: { label: "Descartado",        cls: "bg-gray-200 text-gray-500" },
+  reverted: { label: "Deshecho",          cls: "bg-amber-100 text-amber-700" },
+};
 
 const TYPE_LABELS: Record<string, { label: string; icon: string; color: string }> = {
   budget_increase:   { label: "Aumentar presupuesto", icon: "📈", color: "bg-green-50 border-green-200" },
@@ -21,6 +37,9 @@ const TYPE_LABELS: Record<string, { label: string; icon: string; color: string }
   bid_adjustment:    { label: "Ajustar puja",          icon: "⚖️", color: "bg-brand-50 border-brand-200" },
   pause_variant:     { label: "Pausar variante",       icon: "⏸", color: "bg-orange-50 border-orange-200" },
   pause_campaign:    { label: "Pausar campaña",        icon: "🛑", color: "bg-red-50 border-red-200" },
+  angle_redistribute:{ label: "Redistribuir ángulos",  icon: "🧭", color: "bg-indigo-50 border-indigo-200" },
+  angle_inconclusive:{ label: "Seguir testeando",      icon: "⏳", color: "bg-gray-50 border-gray-200" },
+  offer_test_consolidate: { label: "Consolidar oferta", icon: "🏆", color: "bg-emerald-50 border-emerald-200" },
 };
 
 function PayloadDetail({ payload }: { payload: Record<string, unknown> }) {
@@ -92,8 +111,22 @@ export function RecommendationCards({ planId }: { planId: string }) {
     }
   }
 
-  const pending = recs.filter((r) => r.status === "pending");
-  const done = recs.filter((r) => r.status !== "pending");
+  async function handleUndo(id: string) {
+    setActionLoading(id);
+    try {
+      const updated = await api.post<Recommendation>(`/recommendations/${id}/undo`, {});
+      setRecs((prev) => prev.map((r) => (r.id === id ? updated : r)));
+    } catch {
+      // el backend devuelve 502 si Meta rechaza el undo — recargamos para ver el detalle
+      fetchRecs();
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  // "failed" se muestra como accionable (permite reintentar la ejecución en Meta).
+  const pending = recs.filter((r) => r.status === "pending" || r.status === "failed");
+  const done = recs.filter((r) => r.status !== "pending" && r.status !== "failed");
 
   return (
     <div className="space-y-3">
@@ -137,19 +170,28 @@ export function RecommendationCards({ planId }: { planId: string }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <span className="text-sm font-semibold text-gray-800">{meta.label}</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
-                        Pendiente
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                        rec.status === "failed"
+                          ? "bg-red-100 text-red-700"
+                          : "bg-amber-100 text-amber-700"
+                      }`}>
+                        {rec.status === "failed" ? "Falló — reintentar" : "Pendiente"}
                       </span>
                     </div>
                     <p className="text-xs text-gray-600 mt-1 leading-relaxed">{rec.reasoning}</p>
                     <PayloadDetail payload={rec.action_payload} />
+                    {rec.status === "failed" && rec.applied_result?.detail && (
+                      <p className="mt-2 text-[11px] text-red-600 bg-red-50 border border-red-100 rounded px-2 py-1">
+                        ⚠ {rec.applied_result.detail}
+                      </p>
+                    )}
                     <div className="flex gap-2 mt-3">
                       <button
                         disabled={busy}
                         onClick={() => handleApprove(rec.id)}
                         className="px-3 py-1.5 text-xs font-medium rounded-lg bg-green-600 hover:bg-green-700 text-white disabled:opacity-60"
                       >
-                        {busy ? "…" : "✓ Aprobar"}
+                        {busy ? "…" : rec.status === "failed" ? "↻ Reintentar" : "✓ Aprobar y ejecutar"}
                       </button>
                       <button
                         disabled={busy}
@@ -172,22 +214,29 @@ export function RecommendationCards({ planId }: { planId: string }) {
           <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Historial</p>
           {done.map((rec) => {
             const meta = TYPE_LABELS[rec.type] ?? { label: rec.type, icon: "💡", color: "" };
-            const isApproved = rec.status === "approved";
+            const badge = STATUS_BADGE[rec.status] ?? STATUS_BADGE.rejected;
+            // Para aplicadas/manuales mostramos el detalle real de la ejecución.
+            const sub = rec.applied_result?.detail || rec.reasoning;
+            const busy = actionLoading === rec.id;
             return (
               <div key={rec.id} className="flex items-center gap-3 py-2 px-3 rounded-lg bg-gray-50 border border-gray-100">
                 <span className="text-base">{meta.icon}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-gray-700 truncate">{meta.label}</p>
-                  <p className="text-[10px] text-gray-400 truncate">{rec.reasoning.slice(0, 80)}…</p>
+                  <p className="text-[10px] text-gray-400 truncate">{sub.slice(0, 90)}</p>
                 </div>
-                <span
-                  className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${
-                    isApproved
-                      ? "bg-green-100 text-green-700"
-                      : "bg-gray-200 text-gray-500"
-                  }`}
-                >
-                  {isApproved ? "Aprobado" : "Descartado"}
+                {rec.status === "applied" && (
+                  <button
+                    disabled={busy}
+                    onClick={() => handleUndo(rec.id)}
+                    title="Reactivar pausados y restaurar presupuestos"
+                    className="text-[10px] px-2 py-0.5 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 shrink-0 disabled:opacity-60"
+                  >
+                    {busy ? "…" : "↩ Deshacer"}
+                  </button>
+                )}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${badge.cls}`}>
+                  {badge.label}
                 </span>
               </div>
             );

@@ -27,6 +27,7 @@ def _to_response(settings: UserSettings) -> UserSettingsResponse:
         business_description=settings.business_description,
         business_type=settings.business_type,
         resend_from_email=settings.resend_from_email,
+        privacy_policy_url=settings.privacy_policy_url,
         has_resend_key=bool(settings.resend_api_key),
         has_meta_token=bool(settings.meta_access_token),
         whatsapp_phone_number_id=settings.whatsapp_phone_number_id,

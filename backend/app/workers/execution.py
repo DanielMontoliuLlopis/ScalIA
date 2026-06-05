@@ -63,7 +63,39 @@ def execute_plan_resume_ads(self, plan_id: str, start_step: int, campaign_edits:
     real_next_step = context.pop("__next_step", start_step)
     if "AdsAgent" in context and campaign_edits:
         context["AdsAgent"] = _apply_campaign_edits(context["AdsAgent"], campaign_edits)
+        # Persistir el output editado en el AgentTask y el plan: publish-meta lee
+        # ads_task.output directamente, así que sin esto los cambios se perderían.
+        _persist_ads_edits(plan_id, context["AdsAgent"])
     return _execute_plan_sync(plan_id, start_step=real_next_step, context=context)
+
+
+def _persist_ads_edits(plan_id: str, ads_output: dict) -> None:
+    """Guarda el output editado del AdsAgent (campaign_json + angles_tested) en DB."""
+    from app.models.plan import Plan
+    from app.models.task import AgentTask, TaskStatus
+
+    db = _get_session()
+    try:
+        ads_task = db.execute(
+            select(AgentTask)
+            .where(
+                AgentTask.plan_id == uuid.UUID(plan_id),
+                AgentTask.agent_name == "AdsAgent",
+                AgentTask.status == TaskStatus.completed,
+            )
+            .order_by(AgentTask.created_at.desc())
+        ).scalars().first()
+        if ads_task:
+            ads_task.output = ads_output
+        if ads_output.get("angles_tested"):
+            plan = db.execute(
+                select(Plan).where(Plan.id == uuid.UUID(plan_id))
+            ).scalar_one_or_none()
+            if plan:
+                plan.angles_tested = ads_output["angles_tested"]
+        db.commit()
+    finally:
+        db.close()
 
 
 @celery_app.task(name="execute_plan_resume_funnel", bind=True, max_retries=3)
@@ -199,7 +231,7 @@ def generate_angle_images(self, plan_id: str, count: int = 2, angles: list[str] 
 
         # Con selección explícita generamos todos los pedidos; si no, los primeros `count`.
         targets = pending if angles else pending[: max(1, count)]
-        agent = CopyAgent()
+        agent = CopyAgent(user_id=plan.user_id, plan_id=plan.id, agent_name="CopyAgent")
 
         async def _gen() -> None:
             for c in targets:
@@ -249,12 +281,71 @@ def _apply_campaign_edits(ads_output: dict, edits: dict) -> dict:
         cj.setdefault("ad_set", {}).setdefault("targeting", {})["age_max"] = int(edits["age_max"])
     if "countries" in edits:
         cj.setdefault("ad_set", {}).setdefault("targeting", {}).setdefault("geo_locations", {})["countries"] = edits["countries"]
+    if "genders" in edits:
+        g = [x for x in (edits["genders"] or []) if x in (1, 2)]
+        tgt = cj.setdefault("ad_set", {}).setdefault("targeting", {})
+        # [] o [1,2] = "todos" → no fijamos genders (mejor alcance)
+        if g and len(g) < 2:
+            tgt["genders"] = g
+        else:
+            tgt.pop("genders", None)
     if "ad_a_message" in edits:
         cj.setdefault("ads", [{}, {}])[0].setdefault("creative", {}).setdefault("object_story_spec", {}).setdefault("link_data", {})["message"] = edits["ad_a_message"]
     if "ad_b_message" in edits:
         cj.setdefault("ads", [{}, {}])[1].setdefault("creative", {}).setdefault("object_story_spec", {}).setdefault("link_data", {})["message"] = edits["ad_b_message"]
 
+    # Multi-Angle: el usuario selecciona qué ángulos mantener y puede editar el hook.
+    # edits["angles"] = [{"index": int, "keep": bool, "hook": str?}, ...]
+    if "angles" in edits and isinstance(edits["angles"], list):
+        result = _apply_angle_edits(result, cj, edits["angles"])
+        cj = result["campaign_json"]
+
     result["campaign_json"] = cj
+    return result
+
+
+def _apply_angle_edits(result: dict, cj: dict, angle_edits: list[dict]) -> dict:
+    """Filtra ad sets por ángulo según selección y reparte budget equitativo."""
+    ad_sets = [cj.get("ad_set", {}), *cj.get("additional_ad_sets", [])]
+    angles_tested = result.get("angles_tested", []) or []
+
+    kept_ad_sets: list[dict] = []
+    kept_angles: list[dict] = []
+    for edit in angle_edits:
+        idx = edit.get("index")
+        if idx is None or idx >= len(ad_sets):
+            continue
+        if not edit.get("keep", True):
+            continue
+        ad_set = ad_sets[idx]
+        at = angles_tested[idx] if idx < len(angles_tested) else {}
+        new_hook = (edit.get("hook") or "").strip()
+        if new_hook:
+            at = {**at, "hook": new_hook}
+            # reflejar el hook en el titular del creative del ad set
+            for ad in ad_set.get("ads", []):
+                ld = (
+                    ad.get("creative", {})
+                    .get("object_story_spec", {})
+                    .get("link_data")
+                )
+                if isinstance(ld, dict):
+                    ld["name"] = new_hook
+        kept_ad_sets.append(ad_set)
+        kept_angles.append(at)
+
+    if not kept_ad_sets:
+        return result  # no tocar si el usuario no dejó ninguno
+
+    # Reparto equitativo del budget entre los ángulos que quedan (fase 1)
+    share = round(1 / len(kept_ad_sets), 4)
+    for at in kept_angles:
+        at["budget_share"] = share
+
+    cj["ad_set"] = kept_ad_sets[0]
+    cj["additional_ad_sets"] = kept_ad_sets[1:]
+    result["campaign_json"] = cj
+    result["angles_tested"] = kept_angles
     return result
 
 

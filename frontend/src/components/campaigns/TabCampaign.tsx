@@ -108,11 +108,10 @@ function CheckboxGroup({
             key={o.value}
             disabled={disabled}
             onClick={() => toggle(o.value)}
-            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
-              on
-                ? "bg-brand-600 text-white border-brand-600"
-                : "bg-white text-gray-600 border-gray-200 hover:border-brand-300"
-            } ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${on
+              ? "bg-brand-600 text-white border-brand-600"
+              : "bg-white text-gray-600 border-gray-200 hover:border-brand-300"
+              } ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
           >
             {o.label}
           </button>
@@ -400,7 +399,7 @@ function FunnelMetricsSection({ planId }: { planId: string }) {
   const [metrics, setMetrics] = useState<FunnelMetrics | null>(null);
 
   useEffect(() => {
-    api.get<FunnelMetrics>(`/campaigns/${planId}/metrics`).then(setMetrics).catch(() => {});
+    api.get<FunnelMetrics>(`/campaigns/${planId}/metrics`).then(setMetrics).catch(() => { });
   }, [planId]);
 
   if (!metrics) return null;
@@ -467,6 +466,7 @@ export function TabCampaign({
   const [publishError, setPublishError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
+  const [showEmpty, setShowEmpty] = useState(false);
   const [draft, setDraft] = useState<EditState>(() => initialEditState(campaign));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -478,6 +478,14 @@ export function TabCampaign({
   const targeting = adset?.targeting;
 
   const isLocked = metaStatus?.is_locked ?? false;
+
+  // Placeholder para campos sin valor cuando el usuario activa "Mostrar campos vacíos"
+  const emptyHint = (label: string) =>
+    showEmpty ? (
+      <Field label={label}>
+        <span className="text-xs text-gray-300 italic">Sin configurar</span>
+      </Field>
+    ) : null;
 
   function startEdit() {
     setDraft(initialEditState(campaign));
@@ -648,21 +656,20 @@ export function TabCampaign({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         {metaStatus?.has_meta_campaign ? (
           <div
-            className={`flex-1 rounded-xl border px-3 py-2 flex items-center gap-2 text-xs ${
-              isLocked
-                ? "bg-red-50 border-red-200 text-red-700"
-                : metaStatus.meta_status === "PAUSED"
+            className={`flex-1 rounded-xl border px-3 py-2 flex items-center gap-2 text-xs ${isLocked
+              ? "bg-red-50 border-red-200 text-red-700"
+              : metaStatus.meta_status === "PAUSED"
                 ? "bg-amber-50 border-amber-200 text-amber-800"
                 : "bg-gray-50 border-gray-200 text-gray-600"
-            }`}
+              }`}
           >
             <span>{isLocked ? "🔒" : metaStatus.meta_status === "PAUSED" ? "⏸" : "ℹ"}</span>
             <span>
               {isLocked
                 ? "Campaña ACTIVA en Meta — pausa antes de editar."
                 : metaStatus.meta_status
-                ? `Estado Meta: ${metaStatus.meta_status}`
-                : "Sin estado disponible"}
+                  ? `Estado Meta: ${metaStatus.meta_status}`
+                  : "Sin estado disponible"}
             </span>
             {metaStatus.error && <span className="ml-auto text-[10px] opacity-70">{metaStatus.error}</span>}
           </div>
@@ -671,17 +678,28 @@ export function TabCampaign({
         )}
 
         {!editing ? (
-          <button
-            disabled={isLocked}
-            onClick={startEdit}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-              isLocked
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowEmpty((v) => !v)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors border ${showEmpty
+                ? "bg-brand-50 text-brand-700 border-brand-200"
+                : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
+                }`}
+              title="Muestra también los campos sin valor configurado"
+            >
+              {showEmpty ? "Ocultar campos vacíos" : "Mostrar campos vacíos"}
+            </button>
+            <button
+              disabled={isLocked}
+              onClick={startEdit}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${isLocked
                 ? "bg-gray-100 text-gray-400 cursor-not-allowed"
                 : "bg-brand-600 text-white hover:bg-brand-700"
-            }`}
-          >
-            ✏️ Editar campaña
-          </button>
+                }`}
+            >
+              ✏️ Editar campaña
+            </button>
+          </div>
         ) : (
           <div className="flex items-center gap-2">
             {saveError && <span className="text-xs text-red-600">{saveError}</span>}
@@ -1286,7 +1304,7 @@ export function TabCampaign({
           )}
 
           {/* PROMOTED OBJECT — Pixel / Eventos */}
-          {(editing || adset?.promoted_object) && (
+          {(editing || showEmpty || adset?.promoted_object) && (
             <SectionBlock
               title="🎯 Pixel y eventos de conversión"
               info="Conecta tu campaña con el píxel de Meta para medir y optimizar conversiones reales en tu web (no solo clics)."
@@ -1376,13 +1394,16 @@ export function TabCampaign({
                       mono
                     />
                   )}
+                  {!adset?.promoted_object && (
+                    <p className="text-xs text-gray-300 italic">Sin configurar</p>
+                  )}
                 </>
               )}
             </SectionBlock>
           )}
 
           {/* ATTRIBUTION */}
-          {(editing || (adset?.attribution_spec && adset.attribution_spec.length > 0)) && (
+          {(editing || showEmpty || (adset?.attribution_spec && adset.attribution_spec.length > 0)) && (
             <SectionBlock
               title="📊 Ventana de atribución"
               info="Cuánto tiempo tras ver o hacer clic en el anuncio se le atribuye una conversión. Ej: 'clic 7 días' = cuenta compras hasta 7 días después de hacer clic."
@@ -1392,20 +1413,22 @@ export function TabCampaign({
                   specs={draft.attribution_spec}
                   onChange={(v) => setDraft({ ...draft, attribution_spec: v })}
                 />
-              ) : (
-                adset?.attribution_spec?.map((a, i) => (
+              ) : adset?.attribution_spec && adset.attribution_spec.length > 0 ? (
+                adset.attribution_spec.map((a, i) => (
                   <InfoRow
                     key={i}
                     label={ATTRIBUTION_EVENT_LABELS[a.event_type] ?? a.event_type}
                     value={`${a.window_days} día${a.window_days !== 1 ? "s" : ""}`}
                   />
                 ))
+              ) : (
+                <p className="text-xs text-gray-300 italic">Sin configurar</p>
               )}
             </SectionBlock>
           )}
 
           {/* FREQUENCY CAP */}
-          {(editing || (adset?.frequency_control_specs && adset.frequency_control_specs.length > 0)) && (
+          {(editing || showEmpty || (adset?.frequency_control_specs && adset.frequency_control_specs.length > 0)) && (
             <SectionBlock
               title="🔁 Frequency Cap"
               info="Límite de veces que una misma persona ve el anuncio en un periodo. Evita saturar a la audiencia. Ej: máx 2 impresiones cada 7 días."
@@ -1415,14 +1438,16 @@ export function TabCampaign({
                   specs={draft.frequency_control_specs}
                   onChange={(v) => setDraft({ ...draft, frequency_control_specs: v })}
                 />
-              ) : (
-                adset?.frequency_control_specs?.map((f, i) => (
+              ) : adset?.frequency_control_specs && adset.frequency_control_specs.length > 0 ? (
+                adset.frequency_control_specs.map((f, i) => (
                   <InfoRow
                     key={i}
                     label={f.event}
                     value={`Max ${f.max_frequency} cada ${f.interval_days}d`}
                   />
                 ))
+              ) : (
+                <p className="text-xs text-gray-300 italic">Sin configurar</p>
               )}
             </SectionBlock>
           )}
@@ -1499,15 +1524,18 @@ export function TabCampaign({
               )}
 
               {/* Idiomas */}
-              {!editing && targeting.languages && targeting.languages.length > 0 && (
-                <Field label="Idiomas">
-                  <div className="flex flex-wrap gap-1">
-                    {targeting.languages.map((l) => (
-                      <Chip key={l} label={`ID ${l}`} />
-                    ))}
-                  </div>
-                </Field>
-              )}
+              {!editing &&
+                (targeting.languages && targeting.languages.length > 0 ? (
+                  <Field label="Idiomas">
+                    <div className="flex flex-wrap gap-1">
+                      {targeting.languages.map((l) => (
+                        <Chip key={l} label={`ID ${l}`} />
+                      ))}
+                    </div>
+                  </Field>
+                ) : (
+                  emptyHint("Idiomas")
+                ))}
 
               {/* Países */}
               <Field label="Países">
@@ -1526,29 +1554,34 @@ export function TabCampaign({
               </Field>
 
               {/* Geo extra: regions, cities, zips */}
-              {!editing && targeting.geo_locations?.regions && targeting.geo_locations.regions.length > 0 && (
-                <Field label="Regiones">
-                  <div className="flex flex-wrap gap-1">
-                    {targeting.geo_locations.regions.map((r, i) => (
-                      <Chip key={i} label={`Region ${r.key}`} />
-                    ))}
-                  </div>
-                </Field>
-              )}
-              {!editing && targeting.geo_locations?.cities && targeting.geo_locations.cities.length > 0 && (
-                <Field label="Ciudades">
-                  <div className="flex flex-wrap gap-1">
-                    {targeting.geo_locations.cities.map((city, i) => (
-                      <Chip
-                        key={i}
-                        label={`${city.key}${
-                          city.radius ? ` · ${city.radius}${city.distance_unit?.[0] ?? "km"}` : ""
-                        }`}
-                      />
-                    ))}
-                  </div>
-                </Field>
-              )}
+              {!editing &&
+                (targeting.geo_locations?.regions && targeting.geo_locations.regions.length > 0 ? (
+                  <Field label="Regiones">
+                    <div className="flex flex-wrap gap-1">
+                      {targeting.geo_locations.regions.map((r, i) => (
+                        <Chip key={i} label={`Region ${r.key}`} />
+                      ))}
+                    </div>
+                  </Field>
+                ) : (
+                  emptyHint("Regiones")
+                ))}
+              {!editing &&
+                (targeting.geo_locations?.cities && targeting.geo_locations.cities.length > 0 ? (
+                  <Field label="Ciudades">
+                    <div className="flex flex-wrap gap-1">
+                      {targeting.geo_locations.cities.map((city, i) => (
+                        <Chip
+                          key={i}
+                          label={`${city.key}${city.radius ? ` · ${city.radius}${city.distance_unit?.[0] ?? "km"}` : ""
+                            }`}
+                        />
+                      ))}
+                    </div>
+                  </Field>
+                ) : (
+                  emptyHint("Ciudades")
+                ))}
               {editing ? (
                 <Field label="Excluir países">
                   <CountriesEditor
@@ -1556,32 +1589,36 @@ export function TabCampaign({
                     onChange={(v) => setDraft({ ...draft, excluded_countries: v })}
                   />
                 </Field>
-              ) : (
-                targeting.excluded_geo_locations?.countries &&
-                targeting.excluded_geo_locations.countries.length > 0 && (
-                  <Field label="Excluir países">
-                    <div className="flex flex-wrap gap-1">
-                      {targeting.excluded_geo_locations.countries.map((c) => (
-                        <span
-                          key={c}
-                          className="px-2 py-0.5 text-xs rounded-full bg-red-50 text-red-600 border border-red-200"
-                        >
-                          ❌ {COUNTRY_NAMES[c] ?? c}
-                        </span>
-                      ))}
-                    </div>
-                  </Field>
-                )
-              )}
-              {!editing && targeting.geo_locations?.location_types && (
-                <Field label="Tipo de localización">
-                  <div className="flex gap-1">
-                    {targeting.geo_locations.location_types.map((t) => (
-                      <Chip key={t} label={t} />
+              ) : targeting.excluded_geo_locations?.countries &&
+                targeting.excluded_geo_locations.countries.length > 0 ? (
+                <Field label="Excluir países">
+                  <div className="flex flex-wrap gap-1">
+                    {targeting.excluded_geo_locations.countries.map((c) => (
+                      <span
+                        key={c}
+                        className="px-2 py-0.5 text-xs rounded-full bg-red-50 text-red-600 border border-red-200"
+                      >
+                        ❌ {COUNTRY_NAMES[c] ?? c}
+                      </span>
                     ))}
                   </div>
                 </Field>
+              ) : (
+                emptyHint("Excluir países")
               )}
+              {!editing &&
+                (targeting.geo_locations?.location_types &&
+                  targeting.geo_locations.location_types.length > 0 ? (
+                  <Field label="Tipo de localización">
+                    <div className="flex gap-1">
+                      {targeting.geo_locations.location_types.map((t) => (
+                        <Chip key={t} label={t} />
+                      ))}
+                    </div>
+                  </Field>
+                ) : (
+                  emptyHint("Tipo de localización")
+                ))}
 
               {/* Plataformas */}
               <Field label="Plataformas">
@@ -1699,24 +1736,30 @@ export function TabCampaign({
                 )}
               </Field>
 
-              {!editing && targeting.user_device && targeting.user_device.length > 0 && (
-                <Field label="Modelos">
-                  <div className="flex flex-wrap gap-1">
-                    {targeting.user_device.map((d) => (
-                      <Chip key={d} label={d} />
-                    ))}
-                  </div>
-                </Field>
-              )}
-              {!editing && targeting.user_os && targeting.user_os.length > 0 && (
-                <Field label="Sistemas operativos">
-                  <div className="flex flex-wrap gap-1">
-                    {targeting.user_os.map((d) => (
-                      <Chip key={d} label={d} />
-                    ))}
-                  </div>
-                </Field>
-              )}
+              {!editing &&
+                (targeting.user_device && targeting.user_device.length > 0 ? (
+                  <Field label="Modelos">
+                    <div className="flex flex-wrap gap-1">
+                      {targeting.user_device.map((d) => (
+                        <Chip key={d} label={d} />
+                      ))}
+                    </div>
+                  </Field>
+                ) : (
+                  emptyHint("Modelos")
+                ))}
+              {!editing &&
+                (targeting.user_os && targeting.user_os.length > 0 ? (
+                  <Field label="Sistemas operativos">
+                    <div className="flex flex-wrap gap-1">
+                      {targeting.user_os.map((d) => (
+                        <Chip key={d} label={d} />
+                      ))}
+                    </div>
+                  </Field>
+                ) : (
+                  emptyHint("Sistemas operativos")
+                ))}
 
               {/* Intereses */}
               {editing ? (
@@ -1737,11 +1780,10 @@ export function TabCampaign({
                       {ads.interests_mapped.map((interest, i) => (
                         <div
                           key={i}
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${
-                            interest.relevance === "alta"
-                              ? "bg-violet-50 text-violet-700 border-violet-200"
-                              : "bg-gray-50 text-gray-500 border-gray-200"
-                          }`}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${interest.relevance === "alta"
+                            ? "bg-violet-50 text-violet-700 border-violet-200"
+                            : "bg-gray-50 text-gray-500 border-gray-200"
+                            }`}
                         >
                           <span>{interest.name}</span>
                           {interest.relevance === "alta" && <span className="text-violet-400">★</span>}
@@ -1868,8 +1910,8 @@ export function TabCampaign({
               )}
 
               {/* Interest keywords usados */}
-              {!editing && ads?.interest_keywords && ads.interest_keywords.length > 0 && (
-                <Field label="Keywords de búsqueda Brave">
+              {!editing && ads?.interest_keywords && ads.interest_keywords.length > 0 ? (
+                <Field label="Keywords de búsqueda Internet">
                   <div className="flex flex-wrap gap-1">
                     {ads.interest_keywords.map((kw, i) => (
                       <span
@@ -1881,7 +1923,9 @@ export function TabCampaign({
                     ))}
                   </div>
                 </Field>
-              )}
+              ) : !editing ? (
+                emptyHint("Keywords de búsqueda Internet")
+              ) : null}
             </SectionBlock>
           )}
 
@@ -1896,9 +1940,8 @@ export function TabCampaign({
                   return (
                     <div
                       key={i}
-                      className={`rounded-xl border-2 overflow-hidden ${
-                        isA ? "border-violet-200" : "border-sky-200"
-                      }`}
+                      className={`rounded-xl border-2 overflow-hidden ${isA ? "border-violet-200" : "border-sky-200"
+                        }`}
                     >
                       {ld?.image_url && (
                         <img src={ld.image_url} alt={`Variante ${ad.variant}`} className="w-full h-40 object-cover" />
@@ -1908,9 +1951,8 @@ export function TabCampaign({
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span
-                              className={`w-6 h-6 rounded-full ${
-                                isA ? "bg-violet-600" : "bg-sky-500"
-                              } text-white text-xs font-bold flex items-center justify-center`}
+                              className={`w-6 h-6 rounded-full ${isA ? "bg-violet-600" : "bg-sky-500"
+                                } text-white text-xs font-bold flex items-center justify-center`}
                             >
                               {ad.variant}
                             </span>
@@ -1918,13 +1960,12 @@ export function TabCampaign({
                           </div>
                           <div className="flex items-center gap-2">
                             <span
-                              className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                                ad.copy_score >= 8
-                                  ? "bg-green-100 text-green-700"
-                                  : ad.copy_score >= 6
+                              className={`text-xs px-2 py-0.5 rounded-full font-medium ${ad.copy_score >= 8
+                                ? "bg-green-100 text-green-700"
+                                : ad.copy_score >= 6
                                   ? "bg-yellow-100 text-yellow-700"
                                   : "bg-gray-100 text-gray-500"
-                              }`}
+                                }`}
                             >
                               {ad.copy_score}/10
                             </span>
@@ -2144,9 +2185,8 @@ export function TabCampaign({
                             href={ad.landing_url}
                             target="_blank"
                             rel="noreferrer"
-                            className={`text-xs font-medium hover:underline ${
-                              isA ? "text-violet-600" : "text-sky-600"
-                            }`}
+                            className={`text-xs font-medium hover:underline ${isA ? "text-violet-600" : "text-sky-600"
+                              }`}
                           >
                             Ver landing →
                           </a>
@@ -2242,11 +2282,10 @@ export function TabCampaign({
                                       next[i] = { ...draftL, primary_color: p.primary };
                                       setDraft({ ...draft, landings: next });
                                     }}
-                                    className={`w-5 h-5 rounded-full border-2 ${
-                                      draftL.primary_color === p.primary
-                                        ? "border-gray-700"
-                                        : "border-white"
-                                    }`}
+                                    className={`w-5 h-5 rounded-full border-2 ${draftL.primary_color === p.primary
+                                      ? "border-gray-700"
+                                      : "border-white"
+                                      }`}
                                     style={{ backgroundColor: p.primary }}
                                   />
                                 ))}
@@ -2494,11 +2533,10 @@ function Toggle({
     <button
       type="button"
       onClick={() => onChange(!checked)}
-      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-        checked
-          ? "bg-brand-600 text-white border-brand-600"
-          : "bg-white text-gray-600 border-gray-200 hover:border-brand-300"
-      }`}
+      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${checked
+        ? "bg-brand-600 text-white border-brand-600"
+        : "bg-white text-gray-600 border-gray-200 hover:border-brand-300"
+        }`}
     >
       <span>{checked ? "✅" : "⬜"}</span>
       {label}
@@ -3075,9 +3113,8 @@ function KeyVal({
     <div>
       <p className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</p>
       <p
-        className={`text-xs text-gray-700 ${mono ? "font-mono" : ""} ${
-          bold ? "font-semibold text-gray-800" : ""
-        } break-words`}
+        className={`text-xs text-gray-700 ${mono ? "font-mono" : ""} ${bold ? "font-semibold text-gray-800" : ""
+          } break-words`}
       >
         {value}
       </p>

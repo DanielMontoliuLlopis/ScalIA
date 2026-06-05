@@ -12,6 +12,9 @@ from app.models.api_usage import ApiUsage
 from app.models.recommendation import Recommendation
 from app.models.client_account import ClientAccount, ClientAccountMember
 from app.models.angle_performance import AnglePerformance
+from app.models.lead_form import LeadForm
+from app.models.metric_snapshot import MetricSnapshot
+from app.models.metric_alert import MetricAlert
 
 __all__ = [
     "User", "Plan", "PlanStatus", "FunnelType", "SaleType", "AbMode",
@@ -20,4 +23,5 @@ __all__ = [
     "LeadMagnet", "SequenceEvent",
     "Closer", "Commission", "ApiUsage", "Recommendation",
     "ClientAccount", "ClientAccountMember", "AnglePerformance",
+    "LeadForm", "MetricSnapshot", "MetricAlert",
 ]

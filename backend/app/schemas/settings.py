@@ -15,6 +15,7 @@ class UserSettingsUpdate(BaseModel):
     business_type: str | None = None
     resend_api_key: str | None = None
     resend_from_email: str | None = None
+    privacy_policy_url: str | None = None
     whatsapp_phone_number_id: str | None = None
     whatsapp_phone_display: str | None = None
 
@@ -31,6 +32,7 @@ class UserSettingsResponse(BaseModel):
     business_description: str | None = None
     business_type: str | None = None
     resend_from_email: str | None = None
+    privacy_policy_url: str | None = None
     has_resend_key: bool = False
     has_meta_token: bool = False
     whatsapp_phone_number_id: str | None = None
