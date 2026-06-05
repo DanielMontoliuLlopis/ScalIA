@@ -48,6 +48,39 @@ class PlanResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PlanListItem(BaseModel):
+    """Versión ligera para la lista `/plans`. Omite los JSONB pesados
+    (`steps`, `creative_a`, `creative_b`, `angles_tested`) que ningún consumidor
+    de la lista usa — PlanWorkspace pide el plan completo vía GET /plans/{id}."""
+    id: uuid.UUID
+    user_id: uuid.UUID
+    title: str
+    description: str
+    status: PlanStatus
+    feedback: str | None = None
+    funnel_type: str | None = None
+    sale_type: str | None = None
+    redirect_url: str | None = None
+    creative_type: str | None = None
+    ab_testing: bool = False
+    ab_mode: str = "ab_classic"
+    num_angles: int | None = None
+    research_export: bool = False
+    export_url: str | None = None
+    precio_base: float | None = None
+    tipo_oferta: str | None = None
+    urgencia: str | None = None
+    garantia: str | None = None
+    transformacion: str | None = None
+    parent_plan_id: uuid.UUID | None = None
+    is_offer_test: bool = False
+    offer_test_label: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class OfferTestRequest(BaseModel):
     tipo_oferta: str | None = None
     urgencia: str | None = None

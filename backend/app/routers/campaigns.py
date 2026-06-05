@@ -60,7 +60,9 @@ async def list_campaigns(
 
     plan_ids = [p.id for p in plans]
 
-    # Batch: all landings, lead counts, tasks in 3 queries total
+    # Lista ligera: solo landings + conteo de leads (2 queries batch).
+    # Los outputs pesados (ads/copy/email JSONB) NO viajan en la lista — el modal
+    # los pide bajo demanda vía GET /campaigns/{id}.
     landings_result = await db.execute(
         select(LandingPage).where(LandingPage.plan_id.in_(plan_ids))
     )
@@ -73,69 +75,164 @@ async def list_campaigns(
     )
     leads_by_plan: dict = {row.plan_id: row.cnt for row in leads_count_result}
 
-    tasks_result = await db.execute(
-        select(AgentTask).where(
-            AgentTask.plan_id.in_(plan_ids),
-            AgentTask.agent_name.in_(["AdsAgent", "CopyAgent", "EmailAgent"]),
-            AgentTask.status == "completed",
-        )
-    )
-    all_tasks = tasks_result.scalars().all()
-
-    # Index by plan_id
     landings_by_plan: dict[uuid.UUID, list[LandingPage]] = {}
     for l in all_landings:
         landings_by_plan.setdefault(l.plan_id, []).append(l)
 
-    tasks_by_plan: dict[uuid.UUID, list[AgentTask]] = {}
-    for t in all_tasks:
-        tasks_by_plan.setdefault(t.plan_id, []).append(t)
-
     summaries: list[CampaignSummary] = []
     for plan in plans:
         landings = landings_by_plan.get(plan.id, [])
-        tasks = tasks_by_plan.get(plan.id, [])
-
-        ads_output = next((t.output for t in tasks if t.agent_name == "AdsAgent"), None)
-        copy_output = next((t.output for t in tasks if t.agent_name == "CopyAgent"), None)
-        email_output = next((t.output for t in tasks if t.agent_name == "EmailAgent"), None)
-
-        summaries.append(
-            CampaignSummary(
-                plan_id=plan.id,
-                title=plan.title,
-                status=plan.status,
-                created_at=plan.created_at,
-                meta_campaign_id=plan.meta_campaign_id,
-                total_views=sum(l.views for l in landings),
-                total_conversions=sum(l.conversions for l in landings),
-                total_leads=leads_by_plan.get(plan.id, 0),
-                landings=[
-                    {
-                        "id": l.id,
-                        "variant": l.variant,
-                        "headline": l.headline,
-                        "subheadline": l.subheadline,
-                        "benefits": l.benefits or [],
-                        "cta_text": l.cta_text,
-                        "hero_image_url": l.hero_image_url,
-                        "primary_color": l.primary_color,
-                        "views": l.views,
-                        "conversions": l.conversions,
-                    }
-                    for l in landings
-                ],
-                ads_output=ads_output,
-                copy_output=copy_output,
-                email_output=email_output,
-                parent_plan_id=plan.parent_plan_id,
-                is_offer_test=plan.is_offer_test,
-                offer_test_label=plan.offer_test_label,
-                ab_mode=plan.ab_mode or "ab_classic",
-            )
-        )
+        summaries.append(_summary_from(plan, landings, leads_by_plan.get(plan.id, 0)))
 
     return summaries
+
+
+def _summary_from(
+    plan: Plan,
+    landings: list[LandingPage],
+    total_leads: int,
+    *,
+    ads_output: Any = None,
+    copy_output: Any = None,
+    email_output: Any = None,
+) -> CampaignSummary:
+    return CampaignSummary(
+        plan_id=plan.id,
+        title=plan.title,
+        status=plan.status,
+        created_at=plan.created_at,
+        meta_campaign_id=plan.meta_campaign_id,
+        total_views=sum(l.views for l in landings),
+        total_conversions=sum(l.conversions for l in landings),
+        total_leads=total_leads,
+        landings=[
+            {
+                "id": l.id,
+                "variant": l.variant,
+                "headline": l.headline,
+                "subheadline": l.subheadline,
+                "benefits": l.benefits or [],
+                "cta_text": l.cta_text,
+                "hero_image_url": l.hero_image_url,
+                "primary_color": l.primary_color,
+                "views": l.views,
+                "conversions": l.conversions,
+            }
+            for l in landings
+        ],
+        ads_output=ads_output,
+        copy_output=copy_output,
+        email_output=email_output,
+        parent_plan_id=plan.parent_plan_id,
+        is_offer_test=plan.is_offer_test,
+        offer_test_label=plan.offer_test_label,
+        ab_mode=plan.ab_mode or "ab_classic",
+    )
+
+
+# ─── Bulk metrics (desde snapshots, sin pegar a Meta) ─────────────────────────
+
+class CampaignMetricsBulk(BaseModel):
+    spend: float = 0.0
+    impressions: int = 0
+    clicks: int = 0
+    reach: int = 0
+    leads: int = 0
+    revenue: float = 0.0
+    ctr: float | None = None       # porcentaje, igual escala que Meta
+    cpc: float | None = None
+    roas: float | None = None
+
+
+@router.get("/metrics/bulk", response_model=dict[str, CampaignMetricsBulk])
+async def get_bulk_metrics(
+    current_user: User = Depends(get_current_user),
+    client_account: ClientAccount = Depends(get_active_client_account),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, CampaignMetricsBulk]:
+    """Métricas agregadas de TODAS las campañas en 1 query, leyendo de
+    `metric_snapshots` (las puebla el beat horario). Reemplaza las 2N llamadas
+    en vivo a Meta (/metrics + /meta-insights) que hacía la lista de campañas."""
+    from app.models.metric_snapshot import MetricSnapshot
+
+    rows = await db.execute(
+        select(
+            MetricSnapshot.plan_id,
+            func.sum(MetricSnapshot.spend),
+            func.sum(MetricSnapshot.impressions),
+            func.sum(MetricSnapshot.clicks),
+            func.sum(MetricSnapshot.reach),
+            func.sum(MetricSnapshot.leads),
+            func.sum(MetricSnapshot.revenue),
+        )
+        .where(
+            MetricSnapshot.client_account_id == client_account.id,
+            MetricSnapshot.level == "campaign",
+            MetricSnapshot.breakdown_key == "",
+        )
+        .group_by(MetricSnapshot.plan_id)
+    )
+
+    out: dict[str, CampaignMetricsBulk] = {}
+    for plan_id, spend, impr, clicks, reach, leads, revenue in rows:
+        spend = float(spend or 0)
+        impr = int(impr or 0)
+        clicks = int(clicks or 0)
+        revenue = float(revenue or 0)
+        out[str(plan_id)] = CampaignMetricsBulk(
+            spend=spend,
+            impressions=impr,
+            clicks=clicks,
+            reach=int(reach or 0),
+            leads=int(leads or 0),
+            revenue=revenue,
+            ctr=(clicks / impr * 100) if impr else None,
+            cpc=(spend / clicks) if clicks else None,
+            roas=(revenue / spend) if spend else None,
+        )
+    return out
+
+
+# ─── Detalle de una campaña (outputs pesados bajo demanda) ────────────────────
+
+@router.get("/{plan_id}", response_model=CampaignSummary)
+async def get_campaign_detail(
+    plan_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    client_account: ClientAccount = Depends(get_active_client_account),
+    db: AsyncSession = Depends(get_db),
+) -> CampaignSummary:
+    """Detalle completo de una campaña, incluyendo los outputs de AdsAgent/
+    CopyAgent/EmailAgent. Lo pide el modal al abrirse — no en la lista."""
+    plan = (await db.execute(
+        select(Plan).where(Plan.id == plan_id, Plan.client_account_id == client_account.id)
+    )).scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    landings = (await db.execute(
+        select(LandingPage).where(LandingPage.plan_id == plan_id)
+    )).scalars().all()
+
+    total_leads = (await db.execute(
+        select(func.count()).where(Lead.plan_id == plan_id)
+    )).scalar() or 0
+
+    tasks = (await db.execute(
+        select(AgentTask).where(
+            AgentTask.plan_id == plan_id,
+            AgentTask.agent_name.in_(["AdsAgent", "CopyAgent", "EmailAgent"]),
+            AgentTask.status == "completed",
+        )
+    )).scalars().all()
+    ads_output = next((t.output for t in tasks if t.agent_name == "AdsAgent"), None)
+    copy_output = next((t.output for t in tasks if t.agent_name == "CopyAgent"), None)
+    email_output = next((t.output for t in tasks if t.agent_name == "EmailAgent"), None)
+
+    return _summary_from(
+        plan, landings, total_leads,
+        ads_output=ads_output, copy_output=copy_output, email_output=email_output,
+    )
 
 
 # ─── Meta status (lock check) ─────────────────────────────────────────────────

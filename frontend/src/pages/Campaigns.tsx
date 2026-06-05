@@ -30,6 +30,18 @@ interface MetaInsights {
   leads: number;
 }
 
+interface BulkMetrics {
+  spend: number;
+  impressions: number;
+  clicks: number;
+  reach: number;
+  leads: number;
+  revenue: number;
+  ctr: number | null;
+  cpc: number | null;
+  roas: number | null;
+}
+
 type View = "grid" | "table";
 
 const VIEW_KEY = "campaigns_view";
@@ -546,32 +558,36 @@ export function Campaigns() {
         setRows(initial);
         setLoading(false);
 
-        campaigns.forEach((c) => {
-          api
-            .get<{ roas: number | null }>(`/campaigns/${c.plan_id}/metrics`)
-            .then((m) => {
-              setRows((prev) =>
-                prev.map((r) => (r.plan_id === c.plan_id ? { ...r, roas: m.roas } : r))
-              );
-            })
-            .catch(() => {});
-
-          if (!c.meta_campaign_id) return;
-          api
-            .get<MetaInsights>(`/campaigns/${c.plan_id}/meta-insights`)
-            .then((insights) => {
-              setRows((prev) =>
-                prev.map((r) =>
-                  r.plan_id === c.plan_id ? { ...r, insights, insightsLoading: false } : r
-                )
-              );
-            })
-            .catch(() => {
-              setRows((prev) =>
-                prev.map((r) => (r.plan_id === c.plan_id ? { ...r, insightsLoading: false } : r))
-              );
-            });
-        });
+        // 1 sola llamada: métricas de TODAS las campañas desde snapshots
+        // (sustituye las 2N llamadas en vivo a Meta /metrics + /meta-insights).
+        api
+          .get<Record<string, BulkMetrics>>("/campaigns/metrics/bulk")
+          .then((bulk) => {
+            setRows((prev) =>
+              prev.map((r) => {
+                const m = bulk[r.plan_id];
+                if (!m) return { ...r, insightsLoading: false };
+                return {
+                  ...r,
+                  roas: m.roas,
+                  insights: {
+                    impressions: m.impressions,
+                    clicks: m.clicks,
+                    spend: m.spend,
+                    reach: m.reach,
+                    cpc: m.cpc,
+                    ctr: m.ctr,
+                    cpp: null,
+                    leads: m.leads,
+                  },
+                  insightsLoading: false,
+                };
+              })
+            );
+          })
+          .catch(() =>
+            setRows((prev) => prev.map((r) => ({ ...r, insightsLoading: false })))
+          );
       })
       .catch(() => setLoading(false));
   }, []);

@@ -13,7 +13,7 @@ from app.models.plan import Plan, PlanStatus
 from app.models.task import AgentTask, TaskStatus
 from app.models.user import User
 from app.models.user_settings import UserSettings
-from app.schemas.plan import PlanResponse, RejectRequest, AgentTaskResponse, ResumeCopyRequest, ResumeAdsRequest, PublishMetaResponse, FunnelChoiceRequest, CreativeChoiceRequest, OfferTestRequest, ResearchGenerateRequest, CampaignWizardRequest, GenerateImagesRequest, GenerateImagesResponse, MessageMatchResponse
+from app.schemas.plan import PlanResponse, PlanListItem, RejectRequest, AgentTaskResponse, ResumeCopyRequest, ResumeAdsRequest, PublishMetaResponse, FunnelChoiceRequest, CreativeChoiceRequest, OfferTestRequest, ResearchGenerateRequest, CampaignWizardRequest, GenerateImagesRequest, GenerateImagesResponse, MessageMatchResponse
 from app.pubsub import async_publish_event
 from app.services import permissions
 from app.services.message_match import gather_message_match
@@ -21,14 +21,28 @@ from app.services.message_match import gather_message_match
 router = APIRouter(prefix="/plans", tags=["plans"])
 
 
-@router.get("", response_model=list[PlanResponse])
+@router.get("", response_model=list[PlanListItem])
 async def list_plans(
     current_user: User = Depends(get_current_user),
     client_account: ClientAccount = Depends(get_active_client_account),
     db: AsyncSession = Depends(get_db),
 ) -> list[Plan]:
+    # load_only: no traemos de BD los JSONB pesados (steps, creative_a/b,
+    # angles_tested) — la lista no los usa y abultan mucho el payload.
+    from sqlalchemy.orm import load_only
+
     result = await db.execute(
-        select(Plan).where(Plan.client_account_id == client_account.id).order_by(Plan.created_at.desc())
+        select(Plan)
+        .options(load_only(
+            Plan.id, Plan.user_id, Plan.title, Plan.description, Plan.status,
+            Plan.feedback, Plan.funnel_type, Plan.sale_type, Plan.redirect_url,
+            Plan.creative_type, Plan.ab_testing, Plan.ab_mode, Plan.num_angles,
+            Plan.research_export, Plan.export_url, Plan.precio_base, Plan.tipo_oferta,
+            Plan.urgencia, Plan.garantia, Plan.transformacion, Plan.parent_plan_id,
+            Plan.is_offer_test, Plan.offer_test_label, Plan.created_at, Plan.updated_at,
+        ))
+        .where(Plan.client_account_id == client_account.id)
+        .order_by(Plan.created_at.desc())
     )
     return result.scalars().all()
 

@@ -36,6 +36,15 @@ export function CampaignModal({ campaign: initialCampaign, onClose }: Props) {
   const [campaign, setCampaign] = useState<Campaign>(initialCampaign);
   const [metaStatus, setMetaStatus] = useState<MetaStatus | null>(null);
 
+  // La lista de campañas viene ligera (sin ads_output/copy_output/email_output).
+  // Al abrir el modal pedimos el detalle completo y lo mergeamos.
+  useEffect(() => {
+    api
+      .get<Campaign>(`/campaigns/${initialCampaign.plan_id}`)
+      .then((full) => setCampaign((prev) => ({ ...prev, ...full })))
+      .catch(() => {});
+  }, [initialCampaign.plan_id]);
+
   useEffect(() => {
     api
       .get<MetaStatus>(`/campaigns/${campaign.plan_id}/meta-status`)
